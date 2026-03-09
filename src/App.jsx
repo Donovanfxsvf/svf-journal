@@ -129,6 +129,46 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 .app{display:flex;height:100vh;overflow:hidden;background:#080A0D;}
 .sidebar{width:240px;min-width:240px;background:#0C0E13;border-right:1px solid #1A1C24;
   display:flex;flex-direction:column;overflow:hidden;}
+
+/* ── MOBILE ── */
+@media(max-width:768px){
+  .sidebar{display:none;}
+  .main{width:100%;}
+  .topbar{padding:0 14px;height:50px;min-height:50px;}
+  .topbar-title{font-size:14px;}
+  .content{padding:12px 14px;}
+  .metrics-row{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;}
+  .metric-value{font-size:18px;}
+  .charts-row{grid-template-columns:1fr;gap:10px;}
+  .stats-grid{grid-template-columns:1fr;gap:10px;}
+  .mini-stats{padding:10px 14px;gap:8px;}
+  .mini-stat{min-width:80px;padding:7px 10px;}
+  .mini-stat-v{font-size:14px;}
+  .cal-day{min-height:52px;padding:5px 4px;}
+  .cal-pnl{font-size:11px;}
+  .scope-toggle{display:none;}
+  .btn-primary{padding:8px 12px;font-size:12.5px;}
+  .filter-bar{padding:8px 14px;gap:6px;}
+  .filter-select{font-size:12px;padding:5px 8px;}
+  .acct-manage-grid{grid-template-columns:1fr;}
+  .modal{margin:10px;max-width:calc(100vw - 20px);}
+  .form-row{grid-template-columns:1fr;}
+  /* Bottom nav for mobile */
+  .bottom-nav{display:flex !important;}
+  .main{padding-bottom:60px;}
+}
+@media(min-width:769px){
+  .bottom-nav{display:none !important;}
+}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:60px;background:#0C0E13;
+  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-around;
+  z-index:100;padding:0 4px;}
+.bn-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;
+  cursor:pointer;border-radius:10px;transition:all .15s;flex:1;}
+.bn-item.active{background:#0D1E14;}
+.bn-label{font-size:10px;font-weight:600;color:#4A4E5A;}
+.bn-item.active .bn-label{color:#00C076;}
+
 .sidebar-top{padding:18px 16px 14px;border-bottom:1px solid #1A1C24;}
 .sidebar-brand{font-size:16px;font-weight:800;color:#00C076;letter-spacing:-.5px;}
 .sidebar-brand-sub{font-size:10.5px;color:#4A4E5A;margin-top:1px;}
@@ -1344,6 +1384,21 @@ export default function App() {
       </div>
 
       {showAdd && <AddTradeModal accounts={user.accounts} defaultAcct={activeAccts[0]} onClose={()=>setShowAdd(false)} onSave={addTrade}/>}
+
+      {/* MOBILE BOTTOM NAV */}
+      <nav className="bottom-nav">
+        {NAV.map(n=>(
+          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
+            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
+            <span className="bn-label">{n.id==="dashboard"?"Inicio":n.id==="journal"?"Trades":n.id==="calendar"?"Calendario":n.id==="stats"?"Stats":"Cuentas"}</span>
+          </div>
+        ))}
+        <div className="bn-item" onClick={()=>setShowAdd(true)}>
+          <div style={{width:36,height:36,borderRadius:"50%",background:"#00C076",display:"flex",alignItems:"center",justifyContent:"center",marginTop:-18,boxShadow:"0 0 20px rgba(0,192,118,.4)"}}>
+            <Ico n="plus" s={20} c="#fff"/>
+          </div>
+        </div>
+      </nav>
     </>
   );
 }
