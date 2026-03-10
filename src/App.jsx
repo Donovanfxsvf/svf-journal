@@ -3,12 +3,28 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
 } from "recharts";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  onAuthStateChanged,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  deleteUser as firebaseDeleteUser,
+} from "firebase/auth";
+import {
+  doc, getDoc, setDoc, updateDoc, deleteDoc
+} from "firebase/firestore";
+import { auth, db } from "./firebase";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const ASSETS   = ["US30","XAUUSD","BTC","NAS100","EURUSD","GBPUSD","GER40","UK100"];
+const DEFAULT_ASSETS = ["US30","XAUUSD","BTC","NAS100","EURUSD","GBPUSD","GER40","UK100"];
 const SESSIONS = ["NY","LDN","ASIA","LDN/NY"];
 const SETUPS   = ["SVF","BOS","OB","FVG","MSS","CHOCH","LIQUIDITY","BREAKER","OTHER"];
-const SIDES    = ["LONG","SHORT"];
+const SIDES    = ["BUY","SELL"];
+const DEFAULT_RR_PRESETS = [-3,-2,-1.5,-1,0.5,1,1.5,2,2.5,3,4,5];
 const ACCOUNT_TYPES = [
   { id:"real",      label:"Capital Real",    color:"#00C076", icon:"💰" },
   { id:"funded",    label:"Fondeo",          color:"#64D2FF", icon:"🏦" },
@@ -16,62 +32,45 @@ const ACCOUNT_TYPES = [
   { id:"challenge", label:"Prop Challenge",  color:"#FFD60A", icon:"🎯" },
 ];
 
-// ─── LOCAL STORAGE AUTH ───────────────────────────────────────────────────────
-const LS_USERS = "svf_users";
-const LS_SESSION = "svf_session";
+// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
 const LS_THEME = "svf_theme";
 
-// Usuario demo pre-cargado (solo la primera vez)
-const DEMO_SEED = {
-  id:"u_demo", name:"Demo SMO", email:"demo@smo.com", password:"smo2026",
+async function fbGetUserData(uid) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    return snap.exists() ? snap.data() : null;
+  } catch { return null; }
+}
+
+async function fbSaveUserData(uid, data) {
+  try {
+    await setDoc(doc(db, "users", uid), data, { merge: true });
+  } catch(e) { console.error("fbSave:", e); }
+}
+
+const DEMO_SEED_DATA = {
+  customAssets: [],
+  rrPresets: [...DEFAULT_RR_PRESETS],
   accounts:[
-    { id:"a1", name:"IC Markets Real", type:"real",      broker:"IC Markets",   balance:5000,  currency:"USD" },
-    { id:"a2", name:"FTMO $100K",      type:"funded",    broker:"FTMO",         balance:100000,currency:"USD" },
-    { id:"a3", name:"Desafío MyFF",    type:"challenge", broker:"MyForexFunds", balance:50000, currency:"USD" },
-    { id:"a4", name:"Demo Práctica",   type:"demo",      broker:"MT5 Demo",     balance:10000, currency:"USD" },
+    { id:"demo-acct", name:"Cuenta Demostración 🧪", type:"demo", broker:"SVF Demo", balance:10000, currency:"USD", isDemo:true },
   ],
   trades:[
-    { id:1,  accountId:"a1", date:"2026-01-06", asset:"US30",   side:"LONG",  entry:43200, exit:43350, qty:1,   pnl:150,  rr:2.1, session:"NY",   setup:"BOS",  notes:"BOS limpio H1" },
-    { id:2,  accountId:"a1", date:"2026-01-07", asset:"XAUUSD", side:"SHORT", entry:2640,  exit:2628,  qty:0.5, pnl:120,  rr:1.8, session:"LDN",  setup:"OB",   notes:"OB bajista" },
-    { id:3,  accountId:"a1", date:"2026-01-08", asset:"US30",   side:"LONG",  entry:43400, exit:43320, qty:1,   pnl:-80,  rr:-1,  session:"NY",   setup:"FVG",  notes:"Stop spread" },
-    { id:4,  accountId:"a2", date:"2026-01-09", asset:"BTC",    side:"LONG",  entry:95200, exit:96100, qty:0.1, pnl:90,   rr:1.5, session:"ASIA", setup:"BOS",  notes:"" },
-    { id:5,  accountId:"a2", date:"2026-01-13", asset:"XAUUSD", side:"LONG",  entry:2655,  exit:2672,  qty:0.5, pnl:170,  rr:2.4, session:"LDN",  setup:"OB",   notes:"" },
-    { id:6,  accountId:"a2", date:"2026-01-14", asset:"US30",   side:"SHORT", entry:43600, exit:43510, qty:1,   pnl:90,   rr:1.2, session:"NY",   setup:"MSS",  notes:"" },
-    { id:7,  accountId:"a3", date:"2026-01-20", asset:"US30",   side:"LONG",  entry:43700, exit:43900, qty:1,   pnl:200,  rr:2.8, session:"NY",   setup:"OB",   notes:"Día perfecto" },
-    { id:8,  accountId:"a3", date:"2026-01-21", asset:"XAUUSD", side:"LONG",  entry:2670,  exit:2682,  qty:1,   pnl:120,  rr:1.6, session:"LDN",  setup:"BOS",  notes:"" },
-    { id:9,  accountId:"a4", date:"2026-01-22", asset:"NAS100", side:"SHORT", entry:21500, exit:21400, qty:0.5, pnl:50,   rr:1.0, session:"NY",   setup:"FVG",  notes:"Práctica" },
-    { id:10, accountId:"a4", date:"2026-01-27", asset:"BTC",    side:"LONG",  entry:98500, exit:97800, qty:0.1, pnl:-70,  rr:-1.2,session:"ASIA", setup:"OB",   notes:"Falsa ruptura" },
-    { id:11, accountId:"a1", date:"2026-02-03", asset:"US30",   side:"LONG",  entry:44100, exit:44280, qty:1,   pnl:180,  rr:2.5, session:"NY",   setup:"BOS",  notes:"" },
-    { id:12, accountId:"a2", date:"2026-02-04", asset:"XAUUSD", side:"LONG",  entry:2710,  exit:2728,  qty:0.5, pnl:180,  rr:2.6, session:"LDN",  setup:"OB",   notes:"Excelente" },
-    { id:13, accountId:"a3", date:"2026-02-05", asset:"BTC",    side:"SHORT", entry:99200, exit:98400, qty:0.1, pnl:80,   rr:1.1, session:"ASIA", setup:"MSS",  notes:"" },
-    { id:14, accountId:"a4", date:"2026-02-10", asset:"EURUSD", side:"LONG",  entry:1.0850,exit:1.0880,qty:1,   pnl:30,   rr:1.5, session:"LDN",  setup:"FVG",  notes:"Demo Forex" },
+    { id:1,  accountId:"demo-acct", date:"2026-01-06", asset:"US30",   side:"BUY",  entry:43200, exit:43350, qty:1,   pnl:150,  rr:2.1, session:"NY",   setup:"BOS",  notes:"BOS limpio H1" },
+    { id:2,  accountId:"demo-acct", date:"2026-01-07", asset:"XAUUSD", side:"SELL", entry:2640,  exit:2628,  qty:0.5, pnl:120,  rr:1.8, session:"LDN",  setup:"OB",   notes:"OB bajista" },
+    { id:3,  accountId:"demo-acct", date:"2026-01-08", asset:"US30",   side:"BUY",  entry:43400, exit:43320, qty:1,   pnl:-80,  rr:-1,  session:"NY",   setup:"FVG",  notes:"Stop spread" },
+    { id:4,  accountId:"demo-acct", date:"2026-01-09", asset:"BTC",    side:"BUY",  entry:95200, exit:96100, qty:0.1, pnl:90,   rr:1.5, session:"ASIA", setup:"BOS",  notes:"" },
+    { id:5,  accountId:"demo-acct", date:"2026-01-13", asset:"XAUUSD", side:"BUY",  entry:2655,  exit:2672,  qty:0.5, pnl:170,  rr:2.4, session:"LDN",  setup:"OB",   notes:"" },
+    { id:6,  accountId:"demo-acct", date:"2026-01-14", asset:"US30",   side:"SELL", entry:43600, exit:43510, qty:1,   pnl:90,   rr:1.2, session:"NY",   setup:"MSS",  notes:"" },
+    { id:7,  accountId:"demo-acct", date:"2026-01-20", asset:"US30",   side:"BUY",  entry:43700, exit:43900, qty:1,   pnl:200,  rr:2.8, session:"NY",   setup:"OB",   notes:"Día perfecto" },
+    { id:8,  accountId:"demo-acct", date:"2026-01-21", asset:"XAUUSD", side:"BUY",  entry:2670,  exit:2682,  qty:1,   pnl:120,  rr:1.6, session:"LDN",  setup:"BOS",  notes:"" },
+    { id:9,  accountId:"demo-acct", date:"2026-01-22", asset:"NAS100", side:"SELL", entry:21500, exit:21400, qty:0.5, pnl:50,   rr:1.0, session:"NY",   setup:"FVG",  notes:"Práctica" },
+    { id:10, accountId:"demo-acct", date:"2026-01-27", asset:"BTC",    side:"BUY",  entry:98500, exit:97800, qty:0.1, pnl:-70,  rr:-1.2,session:"ASIA", setup:"OB",   notes:"Falsa ruptura" },
+    { id:11, accountId:"demo-acct", date:"2026-02-03", asset:"US30",   side:"BUY",  entry:44100, exit:44280, qty:1,   pnl:180,  rr:2.5, session:"NY",   setup:"BOS",  notes:"" },
+    { id:12, accountId:"demo-acct", date:"2026-02-04", asset:"XAUUSD", side:"BUY",  entry:2710,  exit:2728,  qty:0.5, pnl:180,  rr:2.6, session:"LDN",  setup:"OB",   notes:"Excelente" },
+    { id:13, accountId:"demo-acct", date:"2026-02-05", asset:"BTC",    side:"SELL", entry:99200, exit:98400, qty:0.1, pnl:80,   rr:1.1, session:"ASIA", setup:"MSS",  notes:"" },
+    { id:14, accountId:"demo-acct", date:"2026-02-10", asset:"EURUSD", side:"BUY",  entry:1.0850,exit:1.0880,qty:1,   pnl:30,   rr:1.5, session:"LDN",  setup:"FVG",  notes:"Demo Forex" },
   ]
 };
-
-function lsGetUsers() {
-  try { return JSON.parse(localStorage.getItem(LS_USERS)||"[]"); } catch { return []; }
-}
-function lsSaveUsers(users) {
-  localStorage.setItem(LS_USERS, JSON.stringify(users));
-}
-function lsGetSession() {
-  try { return JSON.parse(localStorage.getItem(LS_SESSION)||"null"); } catch { return null; }
-}
-function lsSaveSession(uid) {
-  if(uid) localStorage.setItem(LS_SESSION, JSON.stringify(uid));
-  else localStorage.removeItem(LS_SESSION);
-}
-function lsSaveUserData(uid, data) {
-  // Guarda trades y accounts del usuario
-  const users = lsGetUsers();
-  const idx = users.findIndex(u=>u.id===uid);
-  if(idx>=0) { users[idx]={...users[idx],...data}; lsSaveUsers(users); }
-}
-// Init: asegura que el demo existe
-(function initDemo() {
-  const users = lsGetUsers();
-  if(!users.find(u=>u.id==="u_demo")) { lsSaveUsers([...users, DEMO_SEED]); }
-})();
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt$ = (v, d=2) => {
@@ -311,8 +310,8 @@ tbody tr{border-top:1px solid #141620;cursor:pointer;transition:background .1s;}
 tbody tr:hover{background:#141620;}
 tbody td{padding:11px 14px;color:#A0A4B0;white-space:nowrap;}
 .tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;}
-.tag-long{background:rgba(0,192,118,.15);color:#00C076;}
-.tag-short{background:rgba(255,59,48,.15);color:#FF3B30;}
+.tag-buy{background:rgba(0,192,118,.15);color:#00C076;}
+.tag-sell{background:rgba(255,59,48,.15);color:#FF3B30;}
 .tag-gray{background:#1A1C24;color:#6A6E7A;}
 
 /* FILTER BAR */
@@ -525,11 +524,10 @@ function ToastContainer({toasts}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOGIN + REGISTRO
 // ═══════════════════════════════════════════════════════════════════════════════
-function Login({onLogin}) {
+function Login() {
   const [mode,setMode]=useState("login");
   const [email,setEmail]=useState("");
   const [pass,setPass]=useState("");
-  const [remember,setRemember]=useState(true);
   const [rName,setRName]=useState("");
   const [rEmail,setREmail]=useState("");
   const [rPass,setRPass]=useState("");
@@ -539,35 +537,42 @@ function Login({onLogin}) {
   const [err,setErr]=useState("");
   const [loading,setLoading]=useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if(!email||!pass) return setErr("Completa todos los campos.");
     setLoading(true); setErr("");
-    setTimeout(()=>{
-      const users = lsGetUsers();
-      const u = users.find(u=>u.email.toLowerCase()===email.toLowerCase()&&u.password===pass);
-      if(u) onLogin(u, remember);
-      else { setErr("Email o contraseña incorrectos."); setLoading(false); }
-    },400);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
+      // onLogin is called via onAuthStateChanged in App
+    } catch(e) {
+      const msg = e.code==="auth/invalid-credential"||e.code==="auth/wrong-password"||e.code==="auth/user-not-found"
+        ? "Email o contraseña incorrectos."
+        : "Error al iniciar sesión.";
+      setErr(msg); setLoading(false);
+    }
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     setErr("");
     if(!rName.trim()) return setErr("Ingresa tu nombre.");
     if(!rEmail.includes("@")) return setErr("Email inválido.");
     if(rPass.length<6) return setErr("Contraseña: mínimo 6 caracteres.");
     if(rPass!==rPass2) return setErr("Las contraseñas no coinciden.");
-    const users = lsGetUsers();
-    if(users.find(u=>u.email.toLowerCase()===rEmail.toLowerCase())) return setErr("Este email ya está registrado.");
     setLoading(true);
-    setTimeout(()=>{
-      const newUser = {
-        id:"u_"+Date.now(), name:rName.trim(),
-        email:rEmail.toLowerCase(), password:rPass,
-        accounts:[], trades:[]
-      };
-      lsSaveUsers([...users, newUser]);
-      onLogin(newUser, true);
-    },400);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, rEmail.trim().toLowerCase(), rPass);
+      await fbSaveUserData(cred.user.uid, {
+        name: rName.trim(),
+        email: rEmail.trim().toLowerCase(),
+        accounts: [],
+        trades: [],
+      });
+      // onLogin triggered via onAuthStateChanged
+    } catch(e) {
+      const msg = e.code==="auth/email-already-in-use"
+        ? "Este email ya está registrado."
+        : "Error al crear cuenta.";
+      setErr(msg); setLoading(false);
+    }
   };
 
   const logoBlock = (
@@ -615,11 +620,6 @@ function Login({onLogin}) {
               <input className="form-input" type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••"
                 onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
             </div>
-            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:"#6A6E7A"}}>
-              <input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}
-                style={{width:15,height:15,accentColor:"#00C076"}}/>
-              Mantener sesión iniciada
-            </label>
             <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={handleLogin} disabled={loading}>
               {loading?"Entrando...":"Iniciar Sesión"}
             </button>
@@ -649,38 +649,45 @@ function Login({onLogin}) {
             <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={handleRegister} disabled={loading}>
               {loading?"Creando cuenta...":"Crear Cuenta"}
             </button>
-            <div className="login-hint">Tu cuenta se guarda en este dispositivo.</div>
+            <div className="login-hint">Tu cuenta se guarda en la nube y sincroniza en todos tus dispositivos.</div>
           </div>
         ) : (
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div style={{fontSize:13,color:"#6A6E7A",lineHeight:1.6}}>
-              Ingresa tu email y te mostraremos tu contraseña guardada en este dispositivo.
+              Ingresa tu email y te enviaremos un enlace para restablecer tu contraseña.
             </div>
             <div className="form-group">
               <label className="form-label">Email</label>
               <input className="form-input" type="email" value={fpEmail} onChange={e=>{setFpEmail(e.target.value);setFpResult(null);}} placeholder="tu@email.com"
-                onKeyDown={e=>{
+                onKeyDown={async e=>{
                   if(e.key==="Enter"){
-                    const users=lsGetUsers();
-                    const u=users.find(u=>u.email.toLowerCase()===fpEmail.toLowerCase());
-                    setFpResult(u?{found:true,pass:u.password,name:u.name}:{found:false});
+                    if(!fpEmail.includes("@")) return setFpResult({found:false,msg:"Ingresa un email válido."});
+                    try {
+                      await sendPasswordResetEmail(auth, fpEmail.trim().toLowerCase());
+                      setFpResult({found:true});
+                    } catch {
+                      setFpResult({found:false,msg:"No se pudo enviar el correo. Verifica el email."});
+                    }
                   }
                 }}/>
             </div>
-            <button className="btn btn-primary" style={{width:"100%"}} onClick={()=>{
-              const users=lsGetUsers();
-              const u=users.find(u=>u.email.toLowerCase()===fpEmail.toLowerCase());
-              setFpResult(u?{found:true,pass:u.password,name:u.name}:{found:false});
-            }}>Buscar cuenta</button>
+            <button className="btn btn-primary" style={{width:"100%"}} onClick={async ()=>{
+              if(!fpEmail.includes("@")) return setFpResult({found:false,msg:"Ingresa un email válido."});
+              try {
+                await sendPasswordResetEmail(auth, fpEmail.trim().toLowerCase());
+                setFpResult({found:true});
+              } catch {
+                setFpResult({found:false,msg:"No se pudo enviar el correo. Verifica el email."});
+              }
+            }}>Enviar enlace</button>
             {fpResult && (fpResult.found ? (
               <div style={{background:"rgba(0,192,118,.1)",border:"1px solid rgba(0,192,118,.25)",borderRadius:10,padding:"12px 14px",fontSize:13}}>
-                <div style={{color:"#4A7A5A",marginBottom:4}}>Cuenta encontrada: <strong style={{color:"#00C076"}}>{fpResult.name}</strong></div>
-                <div style={{color:"#6A6E7A"}}>Tu contraseña es:</div>
-                <div style={{fontFamily:"DM Mono",fontSize:15,color:"#E2E4EA",marginTop:4,letterSpacing:1}}>{fpResult.pass}</div>
+                <div style={{color:"#00C076",fontWeight:600,marginBottom:4}}>✓ Correo enviado</div>
+                <div style={{color:"#6A6E7A"}}>Revisa tu bandeja de entrada y sigue el enlace para cambiar tu contraseña.</div>
               </div>
             ) : (
               <div style={{background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.2)",borderRadius:10,padding:"12px 14px",fontSize:13,color:"#FF3B30"}}>
-                No se encontró ninguna cuenta con ese email en este dispositivo.
+                {fpResult.msg||"No se encontró ninguna cuenta con ese email."}
               </div>
             ))}
           </div>
@@ -763,22 +770,36 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
         </button>
       </div>
 
+      {/* Demo banner — shown only if no real accounts yet */}
+      {!user.accounts.some(a=>!a.isDemo) && (
+        <div style={{background:"linear-gradient(135deg,rgba(0,192,118,.08),rgba(100,210,255,.08))",border:"1px solid rgba(0,192,118,.2)",borderRadius:12,padding:"14px 18px",marginBottom:20,display:"flex",gap:12,alignItems:"flex-start"}}>
+          <div style={{fontSize:24}}>🧪</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:13.5,color:"#00C076",marginBottom:3}}>Estás viendo la Cuenta Demostración</div>
+            <div style={{fontSize:12,color:"#6A6E7A",lineHeight:1.5}}>Esta cuenta tiene trades de ejemplo para que explores todas las funciones. Crea tu primera cuenta real para empezar a registrar tus propios trades.</div>
+          </div>
+        </div>
+      )}
+
       <div className="acct-manage-grid">
         {user.accounts.map(a=>{
           const t=acctType(a.type);
           const acctTrades=trades.filter(tr=>tr.accountId===a.id);
           const st=calcStats(acctTrades);
           return (
-            <div key={a.id} className="acct-manage-card">
+            <div key={a.id} className="acct-manage-card" style={a.isDemo?{border:"1px solid rgba(142,142,154,.2)",opacity:.85}:{}}>
+              {a.isDemo && <div style={{fontSize:10,fontWeight:700,color:"#8E8E9A",letterSpacing:1,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:5}}><span>🧪</span> Cuenta Demostración — solo lectura</div>}
               <div className="acct-top">
                 <div className="acct-emoji" style={{background:t.color+"22"}}>{t.icon}</div>
                 <div style={{flex:1}}>
                   <div className="acct-card-name">{a.name}</div>
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
-                <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
-                  <Ico n="trash" s={12} c="#FF3B30"/>
-                </button>
+                {!a.isDemo && (
+                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
+                    <Ico n="trash" s={12} c="#FF3B30"/>
+                  </button>
+                )}
               </div>
               <div className="acct-card-stats">
                 {[
@@ -1067,11 +1088,12 @@ function TradeLog({trades,accounts,onAdd,onDelete}) {
         </select>
         <select className="filter-select" value={fAsset} onChange={e=>setFA(e.target.value)}>
           <option value="ALL">Activo: Todos</option>
-          {ASSETS.map(a=><option key={a}>{a}</option>)}
+          {DEFAULT_ASSETS.map(a=><option key={a}>{a}</option>)}
         </select>
         <select className="filter-select" value={fSide} onChange={e=>setFS(e.target.value)}>
           <option value="ALL">Lado: Todos</option>
-          {SIDES.map(s=><option key={s}>{s}</option>)}
+          <option value="BUY">BUY</option>
+          <option value="SELL">SELL</option>
         </select>
         <select className="filter-select" value={fSession} onChange={e=>setFSess(e.target.value)}>
           <option value="ALL">Sesión: Todas</option>
@@ -1141,7 +1163,7 @@ function TradeLog({trades,accounts,onAdd,onDelete}) {
                 {[
                   {l:"P&L",    v:fmt$(selected.pnl),  c:pnlColor(selected.pnl)},
                   {l:"R:R",    v:selected.rr+"R",      c:selected.rr>0?"#00C076":"#FF3B30"},
-                  {l:"Lado",   v:selected.side,         c:selected.side==="LONG"?"#00C076":"#FF3B30"},
+                  {l:"Lado",   v:selected.side,         c:selected.side==="BUY"?"#00C076":"#FF3B30"},
                   {l:"Entrada",v:selected.entry,        c:"#E2E4EA"},
                   {l:"Salida", v:selected.exit,         c:"#E2E4EA"},
                   {l:"Sesión", v:selected.session,      c:"#64D2FF"},
@@ -1393,19 +1415,45 @@ function Statistics({trades,accounts}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADD TRADE MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function AddTradeModal({accounts,defaultAcct,onClose,onSave}) {
+function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPresets,onAddAsset,onUpdateRrPresets}) {
+  const allAssets = [...DEFAULT_ASSETS, ...(customAssets||[])];
   const [f,setF]=useState({
     date:new Date().toISOString().slice(0,10),
     accountId:defaultAcct||accounts[0]?.id||"",
-    asset:"US30",side:"LONG",entry:"",exit:"",qty:"1",
+    asset:"US30",side:"BUY",entry:"",exit:"",qty:"1",
     pnl:"",rr:"",session:"NY",setup:"SVF",notes:""
   });
+  const [newAsset,setNewAsset]=useState("");
+  const [showNewAsset,setShowNewAsset]=useState(false);
+  const [newRR,setNewRR]=useState("");
+  const [showNewRR,setShowNewRR]=useState(false);
+
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.pnl||!f.asset||!f.side) return;
     onSave({...f,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0});
     onClose();
   };
+
+  const handleAddAsset=()=>{
+    const t=newAsset.trim().toUpperCase();
+    if(!t) return;
+    onAddAsset(t);
+    s("asset",t);
+    setNewAsset("");
+    setShowNewAsset(false);
+  };
+
+  const handleAddRR=()=>{
+    const v=parseFloat(newRR);
+    if(isNaN(v)) return;
+    const next=[...new Set([...rrPresets,v])].sort((a,b)=>a-b);
+    onUpdateRrPresets(next);
+    s("rr",String(v));
+    setNewRR("");
+    setShowNewRR(false);
+  };
+
   const selAcct=accounts.find(a=>a.id===f.accountId);
   const at=selAcct?acctType(selAcct.type):null;
   return (
@@ -1441,28 +1489,86 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave}) {
               <label className="form-label">Fecha</label>
               <input className="form-input" type="date" value={f.date} onChange={e=>s("date",e.target.value)}/>
             </div>
+            {/* ASSET FIELD */}
             <div className="form-group">
-              <label className="form-label">Activo <span style={{color:"#FF3B30"}}>*</span></label>
-              <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
-                {ASSETS.map(a=><option key={a}>{a}</option>)}
-              </select>
+              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
+                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewAsset(v=>!v)}>
+                  {showNewAsset?"✕ Cancelar":"＋ Nuevo"}
+                </button>
+              </label>
+              {showNewAsset ? (
+                <div style={{display:"flex",gap:6}}>
+                  <input className="form-input" placeholder="Ej: ETH, SP500…" value={newAsset}
+                    onChange={e=>setNewAsset(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&handleAddAsset()}
+                    style={{flex:1,textTransform:"uppercase"}}/>
+                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddAsset}>Add</button>
+                </div>
+              ) : (
+                <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
+                  {allAssets.map(a=><option key={a}>{a}</option>)}
+                </select>
+              )}
             </div>
           </div>
+
+          {/* BUY / SELL */}
           <div className="form-group">
             <label className="form-label">Dirección <span style={{color:"#FF3B30"}}>*</span></label>
             <div className="side-toggle">
-              <button className={`side-btn long${f.side==="LONG"?" active":""}`} onClick={()=>s("side","LONG")}>▲ LONG</button>
-              <button className={`side-btn short${f.side==="SHORT"?" active":""}`} onClick={()=>s("side","SHORT")}>▼ SHORT</button>
+              <button className={`side-btn long${f.side==="BUY"?" active":""}`} onClick={()=>s("side","BUY")}>▲ BUY</button>
+              <button className={`side-btn short${f.side==="SELL"?" active":""}`} onClick={()=>s("side","SELL")}>▼ SELL</button>
             </div>
           </div>
+
           <div className="form-row">
             <div className="form-group"><label className="form-label" style={{display:"flex",justifyContent:"space-between"}}>Entrada <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></label><input className="form-input" type="number" placeholder="0.00" value={f.entry} onChange={e=>s("entry",e.target.value)}/></div>
             <div className="form-group"><label className="form-label" style={{display:"flex",justifyContent:"space-between"}}>Salida <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></label><input className="form-input" type="number" placeholder="0.00" value={f.exit} onChange={e=>s("exit",e.target.value)}/></div>
           </div>
+
           <div className="form-row">
             <div className="form-group"><label className="form-label">P&L ($) <span style={{color:"#FF3B30"}}>*</span></label><input className="form-input" type="number" placeholder="ej: 150 o -80" value={f.pnl} onChange={e=>s("pnl",e.target.value)} style={{borderColor:!f.pnl?"#3D1A1A":""}}/></div>
-            <div className="form-group"><label className="form-label" style={{display:"flex",justifyContent:"space-between"}}>R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></label><input className="form-input" type="number" step="0.1" placeholder="ej: 2.5" value={f.rr} onChange={e=>s("rr",e.target.value)}/></div>
+            {/* R:R FIELD WITH PRESETS */}
+            <div className="form-group">
+              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></span>
+                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewRR(v=>!v)}>
+                  {showNewRR?"✕":"＋ Nuevo"}
+                </button>
+              </label>
+              {showNewRR ? (
+                <div style={{display:"flex",gap:6}}>
+                  <input className="form-input" placeholder="Ej: -2.5 o 3.5" type="number" step="0.1" value={newRR}
+                    onChange={e=>setNewRR(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&handleAddRR()}
+                    style={{flex:1}}/>
+                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddRR}>Add</button>
+                </div>
+              ) : (
+                <>
+                  {/* Preset chips */}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                    {(rrPresets||DEFAULT_RR_PRESETS).map(r=>{
+                      const active = parseFloat(f.rr)===r;
+                      const pos=r>0; const neg=r<0;
+                      return (
+                        <button key={r} onClick={()=>s("rr",String(r))}
+                          style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${active?(neg?"#FF3B30":"#00C076"):"#252830"}`,
+                            background:active?(neg?"rgba(255,59,48,.15)":"rgba(0,192,118,.15)"):"#161820",
+                            color:active?(neg?"#FF3B30":"#00C076"):"#6A6E7A",
+                            fontSize:11.5,fontWeight:active?700:400,cursor:"pointer",transition:"all .12s",fontFamily:"DM Mono"}}>
+                          {r>0?"+":""}{r}R
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input className="form-input" type="number" step="0.1" placeholder="o escribe manualmente…" value={f.rr} onChange={e=>s("rr",e.target.value)}/>
+                </>
+              )}
+            </div>
           </div>
+
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Sesión</label>
@@ -1506,38 +1612,39 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
   const [deleteConfirm,setDeleteConfirm]=useState("");
   const [section,setSection]=useState("profile");
 
-  const saveProfile = () => {
+  const saveProfile = async () => {
     if(!name.trim()) return onToast("El nombre no puede estar vacío.","error");
     if(!email.includes("@")) return onToast("Email inválido.","error");
-    const users = lsGetUsers();
-    const conflict = users.find(u=>u.email.toLowerCase()===email.toLowerCase()&&u.id!==user.id);
-    if(conflict) return onToast("Ese email ya está en uso.","error");
     const updated={...user,name:name.trim(),email:email.toLowerCase()};
-    lsSaveUserData(user.id,updated);
-    const newUsers=users.map(u=>u.id===user.id?{...u,...updated}:u);
-    lsSaveUsers(newUsers);
+    await fbSaveUserData(auth.currentUser.uid,{name:updated.name,email:updated.email});
     onUpdateUser(updated);
     onToast("Perfil actualizado ✓","success");
   };
 
-  const savePassword = () => {
-    if(curPass!==user.password) return onToast("Contraseña actual incorrecta.","error");
+  const savePassword = async () => {
     if(newPass.length<6) return onToast("Mínimo 6 caracteres.","error");
     if(newPass!==newPass2) return onToast("Las contraseñas no coinciden.","error");
-    const users = lsGetUsers();
-    const newUsers=users.map(u=>u.id===user.id?{...u,password:newPass}:u);
-    lsSaveUsers(newUsers);
-    onUpdateUser({...user,password:newPass});
-    setCurPass(""); setNewPass(""); setNewPass2("");
-    onToast("Contraseña actualizada ✓","success");
+    try {
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, curPass);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      await updatePassword(auth.currentUser, newPass);
+      setCurPass(""); setNewPass(""); setNewPass2("");
+      onToast("Contraseña actualizada ✓","success");
+    } catch(e) {
+      onToast(e.code==="auth/wrong-password"?"Contraseña actual incorrecta.":"Error al actualizar.","error");
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if(deleteConfirm!=="ELIMINAR") return onToast('Escribe "ELIMINAR" para confirmar.','error');
-    const users=lsGetUsers();
-    lsSaveUsers(users.filter(u=>u.id!==user.id));
-    onDeleteAccount();
-    onClose();
+    try {
+      await deleteDoc(doc(db,"users",auth.currentUser.uid));
+      await firebaseDeleteUser(auth.currentUser);
+      onDeleteAccount();
+      onClose();
+    } catch(e) {
+      onToast("Error al eliminar. Vuelve a iniciar sesión e intenta de nuevo.","error");
+    }
   };
 
   const menuItems=[
@@ -1657,34 +1764,51 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [theme,     setTheme]     = useState(()=>{ try{return localStorage.getItem(LS_THEME)||"dark";}catch{return "dark";} });
   const [toasts,    setToasts]    = useState([]);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  // Auto-login desde sesión guardada
+  // Firebase Auth state listener — auto-login / logout
   useEffect(()=>{
-    const uid = lsGetSession();
-    if(uid){
-      const users = lsGetUsers();
-      const u = users.find(x=>x.id===uid);
-      if(u){ setUser(u); setTrades(u.trades||[]); setActAccts(u.accounts.map(a=>a.id)); }
-      else lsSaveSession(null);
-    }
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if(firebaseUser){
+        let data = await fbGetUserData(firebaseUser.uid);
+        // Seed demo data for ALL new users (no existing data)
+        if(!data || (!data.accounts || data.accounts.length===0)){
+          data = {
+            name: (data&&data.name) || firebaseUser.displayName || firebaseUser.email.split("@")[0],
+            email: firebaseUser.email,
+            customAssets: [],
+            rrPresets: [...DEFAULT_RR_PRESETS],
+            ...DEMO_SEED_DATA,
+          };
+          await fbSaveUserData(firebaseUser.uid, data);
+        }
+        // Ensure rrPresets exists for legacy users
+        if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
+        if(!data.customAssets) data.customAssets = [];
+        const u = { id: firebaseUser.uid, ...data };
+        setUser(u);
+        setTrades(u.trades||[]);
+        setActAccts((u.accounts||[]).map(a=>a.id));
+      } else {
+        setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
+      }
+      setAuthLoading(false);
+    });
+    return ()=>unsub();
   },[]);
 
-  // Persistir trades y accounts cuando cambian
+  // Persistir trades y accounts en Firestore cuando cambian
   useEffect(()=>{
-    if(!user) return;
-    lsSaveUserData(user.id,{trades,accounts:user.accounts});
-  },[trades,user]);
+    if(!user||!auth.currentUser) return;
+    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
+  },[trades, user]);
 
-  const login = useCallback((u, remember=true) => {
-    if(remember) lsSaveSession(u.id);
-    setUser(u);
-    setTrades(u.trades||[]);
-    setActAccts(u.accounts.map(a=>a.id));
+  const login = useCallback(() => {
+    // handled by onAuthStateChanged
   },[]);
 
-  const logout = () => {
-    lsSaveSession(null);
-    setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
+  const logout = async () => {
+    await signOut(auth);
   };
 
   const addToast = useCallback((msg, type="success") => {
@@ -1723,6 +1847,23 @@ export default function App() {
     setActAccts(p=>p.filter(x=>x!==id));
     setTrades(p=>p.filter(t=>t.accountId!==id));
   },[]);
+  const addCustomAsset = useCallback(name => {
+    const trimmed = name.trim().toUpperCase();
+    if(!trimmed) return;
+    setUser(u=>{
+      const existing = u.customAssets||[];
+      if(existing.includes(trimmed)||(DEFAULT_ASSETS.includes(trimmed))) return u;
+      const next = [...existing, trimmed];
+      if(auth.currentUser) fbSaveUserData(auth.currentUser.uid,{customAssets:next});
+      return {...u, customAssets: next};
+    });
+  },[]);
+  const updateRrPresets = useCallback(presets => {
+    setUser(u=>{
+      if(auth.currentUser) fbSaveUserData(auth.currentUser.uid,{rrPresets:presets});
+      return {...u, rrPresets: presets};
+    });
+  },[]);
 
   // Trades filtered by active accounts (for scope=account, else all)
   const visibleTrades = useMemo(() => {
@@ -1750,7 +1891,8 @@ export default function App() {
     {id:"accounts", label:"Mis Cuentas",  icon:"accts"},
   ];
 
-  if(!user) return <><style>{css}</style><Login onLogin={login}/></>;
+  if(authLoading) return <><style>{css}</style><div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0E1117",color:"#00C076",fontSize:16,fontWeight:600}}>Cargando SVF Journal…</div></>;
+  if(!user) return <><style>{css}</style><Login/></>;
 
   const allAcctPnl = user.accounts.map(a=>({
     id:a.id,
@@ -1831,7 +1973,11 @@ export default function App() {
               <div style={{fontSize:11,color:"#4A4E5A",fontFamily:"DM Mono"}}>
                 {new Date().toLocaleDateString("es-DO",{day:"2-digit",month:"short",year:"numeric"})}
               </div>
-              <button className="btn btn-primary btn-sm topbar-add" onClick={()=>setShowAdd(true)}>
+              <button className="btn btn-primary btn-sm topbar-add" onClick={()=>{
+                const hasRealAcct = user.accounts.some(a=>!a.isDemo);
+                if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");return;}
+                setShowAdd(true);
+              }}>
                 <Ico n="plus" s={13} c="#fff"/><span> Añadir Trade</span>
               </button>
             </div>
@@ -1890,7 +2036,7 @@ export default function App() {
         </main>
       </div>
 
-      {showAdd && <AddTradeModal accounts={user.accounts} defaultAcct={activeAccts[0]} onClose={()=>setShowAdd(false)} onSave={addTrade}/>}
+      {showAdd && <AddTradeModal accounts={user.accounts.filter(a=>!a.isDemo)} defaultAcct={activeAccts.find(id=>!user.accounts.find(a=>a.id===id)?.isDemo)||""} onClose={()=>setShowAdd(false)} onSave={addTrade} customAssets={user.customAssets||[]} rrPresets={user.rrPresets||DEFAULT_RR_PRESETS} onAddAsset={addCustomAsset} onUpdateRrPresets={updateRrPresets}/>}
       {showSettings && <SettingsModal user={user} theme={theme} onClose={()=>setShowSettings(false)} onUpdateUser={updateUser} onToggleTheme={toggleTheme} onDeleteAccount={logout} onToast={addToast}/>}
       <ToastContainer toasts={toasts}/>
 
@@ -1902,7 +2048,11 @@ export default function App() {
             <span className="bn-label">{n.id==="dashboard"?"Inicio":n.id==="journal"?"Trades":n.id==="calendar"?"Calendario":n.id==="stats"?"Stats":"Cuentas"}</span>
           </div>
         ))}
-        <div className="bn-item" onClick={()=>setShowAdd(true)}>
+        <div className="bn-item" onClick={()=>{
+          const hasRealAcct = user.accounts.some(a=>!a.isDemo);
+          if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");return;}
+          setShowAdd(true);
+        }}>
           <div style={{width:36,height:36,borderRadius:"50%",background:"#00C076",display:"flex",alignItems:"center",justifyContent:"center",marginTop:-18,boxShadow:"0 0 20px rgba(0,192,118,.4)"}}>
             <Ico n="plus" s={20} c="#fff"/>
           </div>
