@@ -3,12 +3,12 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "REEMPLAZA_CON_TU_API_KEY",
-  authDomain: "REEMPLAZA_CON_TU_AUTH_DOMAIN",
-  projectId: "REEMPLAZA_CON_TU_PROJECT_ID",
-  storageBucket: "REEMPLAZA_CON_TU_STORAGE_BUCKET",
-  messagingSenderId: "REEMPLAZA_CON_TU_MESSAGING_SENDER_ID",
-  appId: "REEMPLAZA_CON_TU_APP_ID"
+  apiKey: "AIzaSyDZpZRhKePSNobLsouDZP8s_j66pPpEpqE",
+  authDomain: "svf-journal.firebaseapp.com",
+  projectId: "svf-journal",
+  storageBucket: "svf-journal.firebasestorage.app",
+  messagingSenderId: "1052769389659",
+  appId: "1:1052769389659:web:ca24cdbac7a2df9d6e037e"
 };
 
 const app = initializeApp(firebaseConfig);
