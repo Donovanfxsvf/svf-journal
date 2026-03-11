@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -45,7 +45,11 @@ async function fbGetUserData(uid) {
 async function fbSaveUserData(uid, data) {
   try {
     await setDoc(doc(db, "users", uid), data, { merge: true });
-  } catch(e) { console.error("fbSave:", e); }
+    return true;
+  } catch(e) {
+    console.error("fbSave error:", e?.code, e?.message);
+    return false;
+  }
 }
 
 const DEMO_SEED_DATA = {
@@ -149,6 +153,10 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 .btn-danger{background:rgba(255,59,48,.12);color:#FF3B30;border:1px solid rgba(255,59,48,.2);}
 .btn-danger:hover{background:rgba(255,59,48,.2);}
 .btn-sm{padding:7px 12px;font-size:12.5px;border-radius:8px;}
+.mobile-settings-btn{display:none;background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;
+  align-items:center;justify-content:center;transition:background .15s;}
+.mobile-settings-btn:hover{background:#161820;}
+@media(max-width:768px){.mobile-settings-btn{display:flex;}}
 .login-hint{background:#0D1A12;border:1px solid #1A3D22;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#5A9A6A;line-height:1.6;}
 .login-hint strong{color:#00C076;}
 
@@ -494,6 +502,7 @@ const Ico = ({n,s=16,c="currentColor"}) => {
     filt:  <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>,
     globe: <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>,
     chev: <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>,
+    gear: <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>,
   };
   return <svg width={s} height={s} fill="none" stroke={c} strokeWidth="2" viewBox="0 0 24 24">{paths[n]}</svg>;
 };
@@ -1765,6 +1774,8 @@ export default function App() {
   const [theme,     setTheme]     = useState(()=>{ try{return localStorage.getItem(LS_THEME)||"dark";}catch{return "dark";} });
   const [toasts,    setToasts]    = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
+  // Ref para evitar sobreescribir datos durante la carga inicial
+  const skipSaveRef = useRef(true);
 
   // Firebase Auth state listener — auto-login / logout
   useEffect(()=>{
@@ -1786,10 +1797,12 @@ export default function App() {
         if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
         if(!data.customAssets) data.customAssets = [];
         const u = { id: firebaseUser.uid, ...data };
+        skipSaveRef.current = true; // Bloquear guardado durante carga inicial
         setUser(u);
         setTrades(u.trades||[]);
         setActAccts((u.accounts||[]).map(a=>a.id));
       } else {
+        skipSaveRef.current = true;
         setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
       }
       setAuthLoading(false);
@@ -1800,7 +1813,10 @@ export default function App() {
   // Persistir trades y accounts en Firestore cuando cambian
   useEffect(()=>{
     if(!user||!auth.currentUser) return;
-    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
+    // Si estamos en carga inicial, saltar este ciclo y desbloquear para el próximo
+    if(skipSaveRef.current) { skipSaveRef.current = false; return; }
+    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts})
+      .catch(()=>{}); // errores manejados dentro de fbSaveUserData
   },[trades, user]);
 
   const login = useCallback(() => {
@@ -1973,6 +1989,9 @@ export default function App() {
               <div style={{fontSize:11,color:"#4A4E5A",fontFamily:"DM Mono"}}>
                 {new Date().toLocaleDateString("es-DO",{day:"2-digit",month:"short",year:"numeric"})}
               </div>
+              <button className="mobile-settings-btn" onClick={()=>setShowSettings(true)} title="Configuración">
+                <Ico n="gear" s={18} c="#6A6E7A"/>
+              </button>
               <button className="btn btn-primary btn-sm topbar-add" onClick={()=>{
                 const hasRealAcct = user.accounts.some(a=>!a.isDemo);
                 if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");return;}
@@ -2042,10 +2061,16 @@ export default function App() {
 
       {/* MOBILE BOTTOM NAV */}
       <nav className="bottom-nav">
-        {NAV.map(n=>(
+        {NAV.slice(0,2).map(n=>(
           <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
             <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
-            <span className="bn-label">{n.id==="dashboard"?"Inicio":n.id==="journal"?"Trades":n.id==="calendar"?"Calendario":n.id==="stats"?"Stats":"Cuentas"}</span>
+            <span className="bn-label">{n.id==="dashboard"?"Inicio":"Trades"}</span>
+          </div>
+        ))}
+        {NAV.slice(2,3).map(n=>(
+          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
+            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
+            <span className="bn-label">Cal</span>
           </div>
         ))}
         <div className="bn-item" onClick={()=>{
@@ -2056,6 +2081,16 @@ export default function App() {
           <div style={{width:36,height:36,borderRadius:"50%",background:"#00C076",display:"flex",alignItems:"center",justifyContent:"center",marginTop:-18,boxShadow:"0 0 20px rgba(0,192,118,.4)"}}>
             <Ico n="plus" s={20} c="#fff"/>
           </div>
+        </div>
+        {NAV.slice(3,4).map(n=>(
+          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
+            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
+            <span className="bn-label">Stats</span>
+          </div>
+        ))}
+        <div className="bn-item" onClick={()=>setShowSettings(true)}>
+          <Ico n="gear" s={20} c="#4A4E5A"/>
+          <span className="bn-label">Config</span>
         </div>
       </nav>
     </>
