@@ -804,8 +804,8 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
                   <div className="acct-card-name">{a.name}</div>
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
-                {!a.isDemo && (
-                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
+                {(!a.isDemo || user.accounts.some(ac=>!ac.isDemo)) && (
+                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)} title={a.isDemo?"Eliminar cuenta demo":"Eliminar cuenta"}>
                     <Ico n="trash" s={12} c="#FF3B30"/>
                   </button>
                 )}
