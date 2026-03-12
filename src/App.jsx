@@ -2284,6 +2284,18 @@ export default function App() {
               }}>
                 <Ico n="plus" s={13} c="#fff"/><span> Añadir Trade</span>
               </button>
+              <button onClick={logout} title="Cerrar sesión" style={{
+                background:"none",border:"1px solid #2A2C34",borderRadius:8,
+                color:"#4A4E5A",cursor:"pointer",padding:"7px 10px",display:"flex",
+                alignItems:"center",gap:5,fontSize:12,fontWeight:600,transition:"all .2s"
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="#FF3B30";e.currentTarget.style.color="#FF3B30";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor="#2A2C34";e.currentTarget.style.color="#4A4E5A";}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+                <span>Salir</span>
+              </button>
             </div>
           </div>
 
