@@ -1622,27 +1622,27 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
               <label className="form-label">Fecha</label>
               <input className="form-input" type="date" value={f.date} onChange={e=>s("date",e.target.value)}/>
             </div>
-            <div className="form-group">
-              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
-                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewAsset(v=>!v)}>
-                  {showNewAsset?"✕ Cancelar":"＋ Nuevo"}
-                </button>
-              </label>
-              {showNewAsset ? (
-                <div style={{display:"flex",gap:6}}>
-                  <input className="form-input" placeholder="Ej: ETH, SP500…" value={newAsset}
-                    onChange={e=>setNewAsset(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&handleAddAsset()}
-                    style={{flex:1,textTransform:"uppercase"}}/>
-                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddAsset}>Add</button>
-                </div>
-              ) : (
-                <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
-                  {allAssets.map(a=><option key={a}>{a}</option>)}
-                </select>
-              )}
-            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
+              <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewAsset(v=>!v)}>
+                {showNewAsset?"✕ Cancelar":"＋ Nuevo"}
+              </button>
+            </label>
+            {showNewAsset ? (
+              <div style={{display:"flex",gap:6}}>
+                <input className="form-input" placeholder="Ej: ETH, SP500…" value={newAsset}
+                  onChange={e=>setNewAsset(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&handleAddAsset()}
+                  style={{flex:1,textTransform:"uppercase"}}/>
+                <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddAsset}>Add</button>
+              </div>
+            ) : (
+              <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
+                {allAssets.map(a=><option key={a}>{a}</option>)}
+              </select>
+            )}
           </div>
 
           {/* BUY / SELL */}
