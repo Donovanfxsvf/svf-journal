@@ -50,6 +50,7 @@ async function fbSaveUserData(uid, data) {
 
 // ─── ADMIN HELPERS ────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = "donovanjms@gmail.com";
+const ADMIN_EMAILS = ["donovanjms@gmail.com", "crmacademyus@gmail.com"];
 const MAX_USERS   = 165;
 
 async function fbGetStats() {
@@ -1572,7 +1573,7 @@ function AdminPanel() {
         <div style={{fontSize:24}}>🛡️</div>
         <div>
           <div style={{fontSize:16,fontWeight:800,color:"#E2E4EA"}}>Panel de Administrador</div>
-          <div style={{fontSize:12,color:"#4A4E5A"}}>Solo visible para donovanjms@gmail.com</div>
+          <div style={{fontSize:12,color:"#4A4E5A"}}>Solo visible para administradores SMO</div>
         </div>
       </div>
 
@@ -1645,7 +1646,7 @@ function AdminPanel() {
                   <div style={{fontSize:11,color:"#4A4E5A"}}>{u.accounts?.length||0} cuentas</div>
                   <div style={{fontSize:10,color:"#3A3E4A"}}>{u.registeredAt?u.registeredAt.slice(0,10):"—"}</div>
                 </div>
-                {u.email !== ADMIN_EMAIL && (
+                {!ADMIN_EMAILS.includes(u.email) && (
                   <button
                     onClick={()=>setConfirm({uid:u.uid, name:u.name||u.email, banned:!!u.banned})}
                     disabled={toggling===u.uid}
@@ -2263,7 +2264,7 @@ export default function App() {
     return user.accounts.find(a=>a.id===activeAccts[0]);
   },[user,activeAccts,scope]);
 
-  const isAdmin = user?.email === ADMIN_EMAIL;
+  const isAdmin = ADMIN_EMAILS.includes(user?.email);
   const NAV=[
     {id:"dashboard",label:"Dashboard",    icon:"dash"},
     {id:"journal",  label:"Trade Log",    icon:"log"},
