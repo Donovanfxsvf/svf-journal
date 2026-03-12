@@ -101,7 +101,7 @@ function calcStats(trades) {
   return {net,winRate,pf,avgWin,avgLoss,expectancy,totalTrades:trades.length,wins:wins.length,losses:losses.length,maxDD,maxDDPct,bestTrade:Math.max(...trades.map(t=>t.pnl)),worstTrade:Math.min(...trades.map(t=>t.pnl)),avgRR};
 }
 
-function buildEquity(trades, start=5000) {
+function buildEquity(trades, start=0) {
   const sorted=[...trades].sort((a,b)=>a.date.localeCompare(b.date));
   let bal=start;
   const out=[{date:"Inicio",balance:bal}];
@@ -912,7 +912,8 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function Dashboard({trades,accounts,scope}) {
   const st=useMemo(()=>calcStats(trades),[trades]);
-  const eq=useMemo(()=>buildEquity(trades),[trades]);
+  const startBalance=accounts.reduce((s,a)=>s+a.balance,0);
+  const eq=useMemo(()=>buildEquity(trades,startBalance),[trades,startBalance]);
   const dailyPnl=useMemo(()=>{
     const map={};
     trades.forEach(t=>{map[t.date]=(map[t.date]||0)+t.pnl;});
