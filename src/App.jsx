@@ -951,7 +951,7 @@ function Dashboard({trades,accounts,scope}) {
           {l:"Avg Win",      v:fmt$(st.avgWin),                  c:"#00C076",            sub:"por trade ganador"},
           {l:"Avg Loss",     v:fmt$(st.avgLoss),                 c:"#FF3B30",            sub:"por trade perdedor"},
           {l:"Expectancy",   v:fmt$(st.expectancy),              c:pnlColor(st.expectancy),sub:"por trade"},
-          {l:"Max Drawdown", v:fmt$(st.maxDD),                   c:"#FF9F0A",            sub:`${st.maxDDPct.toFixed(1)}% del pico`},
+          {l:"Max Drawdown", v:`${st.maxDDPct.toFixed(2)}%`,     c:"#FF9F0A",            sub:"del pico de balance"},
           {l:"Avg R:R",      v:st.avgRR.toFixed(2)+"R",          c:"#64D2FF",            sub:"trades ganadores"},
         ].map(m=>(
           <div key={m.l} className="metric-card">
@@ -1457,7 +1457,7 @@ function Statistics({trades,accounts}) {
             {k:"Avg Loss",            v:fmt$(st.avgLoss),      c:"#FF3B30"},
             {k:"Mejor Trade",         v:fmt$(st.bestTrade),    c:"#00C076"},
             {k:"Peor Trade",          v:fmt$(st.worstTrade),   c:"#FF3B30"},
-            {k:"Max Drawdown",        v:`${fmt$(st.maxDD)} (${st.maxDDPct.toFixed(1)}%)`,        c:"#FF9F0A"},
+            {k:"Max Drawdown",        v:`${st.maxDDPct.toFixed(2)}%`,        c:"#FF9F0A"},
             {k:"Avg R:R ganadores",   v:st.avgRR.toFixed(2)+"R"},
           ].map(m=>(
             <div key={m.k} className="stats-row-item">
@@ -1622,7 +1622,6 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
               <label className="form-label">Fecha</label>
               <input className="form-input" type="date" value={f.date} onChange={e=>s("date",e.target.value)}/>
             </div>
-            {/* ASSET FIELD */}
             <div className="form-group">
               <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
@@ -1662,43 +1661,25 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
 
           <div className="form-row">
             <div className="form-group"><label className="form-label">P&L ($) <span style={{color:"#FF3B30"}}>*</span></label><input className="form-input" type="number" placeholder="ej: 150 o -80" value={f.pnl} onChange={e=>s("pnl",e.target.value)} style={{borderColor:!f.pnl?"#3D1A1A":""}}/></div>
-            {/* R:R FIELD WITH PRESETS */}
+            {/* R:R FIELD SIMPLIFIED */}
             <div className="form-group">
-              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span>R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></span>
-                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewRR(v=>!v)}>
-                  {showNewRR?"✕":"＋ Nuevo"}
-                </button>
-              </label>
-              {showNewRR ? (
-                <div style={{display:"flex",gap:6}}>
-                  <input className="form-input" placeholder="Ej: -2.5 o 3.5" type="number" step="0.1" value={newRR}
-                    onChange={e=>setNewRR(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&handleAddRR()}
-                    style={{flex:1}}/>
-                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddRR}>Add</button>
-                </div>
-              ) : (
-                <>
-                  {/* Preset chips */}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-                    {(rrPresets||DEFAULT_RR_PRESETS).map(r=>{
-                      const active = parseFloat(f.rr)===r;
-                      const pos=r>0; const neg=r<0;
-                      return (
-                        <button key={r} onClick={()=>s("rr",String(r))}
-                          style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${active?(neg?"#FF3B30":"#00C076"):"#252830"}`,
-                            background:active?(neg?"rgba(255,59,48,.15)":"rgba(0,192,118,.15)"):"#161820",
-                            color:active?(neg?"#FF3B30":"#00C076"):"#6A6E7A",
-                            fontSize:11.5,fontWeight:active?700:400,cursor:"pointer",transition:"all .12s",fontFamily:"DM Mono"}}>
-                          {r>0?"+":""}{r}R
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input className="form-input" type="number" step="0.1" placeholder="o escribe manualmente…" value={f.rr} onChange={e=>s("rr",e.target.value)}/>
-                </>
-              )}
+              <label className="form-label">R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></label>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                {[{label:"1:1",val:"1"},{label:"1:2",val:"2"},{label:"2:1",val:"0.5"},{label:"-1R",val:"-1"}].map(r=>{
+                  const active = parseFloat(f.rr)===parseFloat(r.val);
+                  const isNeg = parseFloat(r.val)<0;
+                  return (
+                    <button key={r.val} onClick={()=>s("rr",r.val)}
+                      style={{flex:1,padding:"9px 4px",borderRadius:10,border:`1px solid ${active?(isNeg?"#FF3B30":"#00C076"):"#252830"}`,
+                        background:active?(isNeg?"rgba(255,59,48,.15)":"rgba(0,192,118,.15)"):"#161820",
+                        color:active?(isNeg?"#FF3B30":"#00C076"):"#6A6E7A",
+                        fontSize:12,fontWeight:active?700:500,cursor:"pointer",transition:"all .12s",fontFamily:"DM Mono"}}>
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input className="form-input" type="number" step="0.1" placeholder="o escribe: 1.5, 3, -2…" value={f.rr} onChange={e=>s("rr",e.target.value)}/>
             </div>
           </div>
 
