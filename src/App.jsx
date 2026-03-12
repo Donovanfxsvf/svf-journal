@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -45,11 +45,7 @@ async function fbGetUserData(uid) {
 async function fbSaveUserData(uid, data) {
   try {
     await setDoc(doc(db, "users", uid), data, { merge: true });
-    return true;
-  } catch(e) {
-    console.error("fbSave error:", e?.code, e?.message);
-    return false;
-  }
+  } catch(e) { console.error("fbSave:", e); }
 }
 
 const DEMO_SEED_DATA = {
@@ -85,6 +81,7 @@ const fmt$ = (v, d=2) => {
 const fmtPct   = v => (v*100).toFixed(1)+"%";
 const pnlColor = v => v>0?"#00C076":v<0?"#FF3B30":"#8A8A9A";
 const pnlBg    = v => v>0?"rgba(0,192,118,.12)":v<0?"rgba(255,59,48,.12)":"rgba(138,138,154,.08)";
+const fmtRR    = v => v===0?"0":v<0?`${v}`:`1:${v}`;
 const acctType = id => ACCOUNT_TYPES.find(a=>a.id===id)||ACCOUNT_TYPES[0];
 
 function calcStats(trades) {
@@ -153,10 +150,6 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 .btn-danger{background:rgba(255,59,48,.12);color:#FF3B30;border:1px solid rgba(255,59,48,.2);}
 .btn-danger:hover{background:rgba(255,59,48,.2);}
 .btn-sm{padding:7px 12px;font-size:12.5px;border-radius:8px;}
-.mobile-settings-btn{display:none;background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;
-  align-items:center;justify-content:center;transition:background .15s;}
-.mobile-settings-btn:hover{background:#161820;}
-@media(max-width:768px){.mobile-settings-btn{display:flex;}}
 .login-hint{background:#0D1A12;border:1px solid #1A3D22;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#5A9A6A;line-height:1.6;}
 .login-hint strong{color:#00C076;}
 
@@ -222,14 +215,43 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 @media(min-width:769px){
   .bottom-nav{display:none !important;}
 }
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:60px;background:#0C0E13;
-  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-around;
-  z-index:100;padding:0 4px;}
-.bn-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;
-  cursor:pointer;border-radius:10px;transition:all .15s;flex:1;}
-.bn-item.active{background:#0D1E14;}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:68px;background:#0C0E13;
+  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-between;
+  z-index:100;padding:0 16px;gap:12px;}
+.bn-add-btn{width:52px;height:52px;border-radius:14px;background:#00C076;display:flex;
+  align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
+  box-shadow:0 0 24px rgba(0,192,118,.45);transition:transform .15s,box-shadow .15s;}
+.bn-add-btn:active{transform:scale(.93);box-shadow:0 0 12px rgba(0,192,118,.3);}
+.bn-menu-btn{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 16px;
+  cursor:pointer;border-radius:12px;transition:background .15s;flex:1;}
+.bn-menu-btn:active{background:#161820;}
+.bn-menu-icon{display:flex;flex-direction:column;gap:4px;align-items:center;}
+.bn-menu-icon span{display:block;width:20px;height:2px;border-radius:2px;background:#4A4E5A;transition:background .15s;}
+.bn-menu-btn.active .bn-menu-icon span{background:#00C076;}
+.bn-menu-label{font-size:10px;font-weight:600;color:#4A4E5A;}
+.bn-menu-btn.active .bn-menu-label{color:#00C076;}
+.bn-cur-tab{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 4px;}
+.bn-cur-label{font-size:10px;color:#4A4E5A;font-weight:600;letter-spacing:.5px;text-transform:uppercase;}
+.bn-cur-name{font-size:13px;font-weight:700;color:#E2E4EA;}
+
+/* NAV SHEET */
+.nav-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;backdrop-filter:blur(4px);}
+.nav-sheet{position:fixed;bottom:0;left:0;right:0;background:#13151D;border-radius:20px 20px 0 0;
+  z-index:301;border-top:1px solid #252830;overflow:hidden;
+  animation:slideUp .22s cubic-bezier(.4,0,.2,1);}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.nav-sheet-handle{width:36px;height:4px;background:#252830;border-radius:4px;margin:12px auto 16px;}
+.nav-sheet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 16px 8px;}
+.nav-sheet-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;
+  border-radius:14px;cursor:pointer;transition:background .15s;border:1px solid transparent;}
+.nav-sheet-item.active{background:#0D1E14;border-color:rgba(0,192,118,.25);}
+.nav-sheet-item:not(.active):active{background:#161820;}
+.nav-sheet-label{font-size:11px;font-weight:600;color:#6A6E7A;}
+.nav-sheet-item.active .nav-sheet-label{color:#00C076;}
+.nav-sheet-footer{padding:12px 16px 28px;border-top:1px solid #1A1C24;margin-top:4px;
+  display:flex;align-items:center;justify-content:center;}
+
 .bn-label{font-size:10px;font-weight:600;color:#4A4E5A;}
-.bn-item.active .bn-label{color:#00C076;}
 
 .sidebar-top{padding:18px 16px 14px;border-bottom:1px solid #1A1C24;}
 .sidebar-brand{font-size:16px;font-weight:800;color:#00C076;letter-spacing:-.5px;}
@@ -502,7 +524,6 @@ const Ico = ({n,s=16,c="currentColor"}) => {
     filt:  <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>,
     globe: <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>,
     chev: <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>,
-    gear: <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>,
   };
   return <svg width={s} height={s} fill="none" stroke={c} strokeWidth="2" viewBox="0 0 24 24">{paths[n]}</svg>;
 };
@@ -804,18 +825,19 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
                   <div className="acct-card-name">{a.name}</div>
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
-                {(!a.isDemo || user.accounts.some(ac=>!ac.isDemo)) && (
-                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)} title={a.isDemo?"Eliminar cuenta demo":"Eliminar cuenta"}>
+                {!a.isDemo && (
+                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
                     <Ico n="trash" s={12} c="#FF3B30"/>
                   </button>
                 )}
               </div>
               <div className="acct-card-stats">
                 {[
-                  {l:"Saldo Inicial",  v:fmt$(a.balance,0),         c:"#E2E4EA"},
-                  {l:"Net P&L",        v:fmt$(st.net),               c:pnlColor(st.net)},
-                  {l:"Win Rate",       v:fmtPct(st.winRate),         c:st.winRate>=.5?"#00C076":"#FF3B30"},
-                  {l:"Trades",         v:st.totalTrades,             c:"#E2E4EA"},
+                  {l:"Saldo Inicial",  v:fmt$(a.balance,0),              c:"#E2E4EA"},
+                  {l:"Balance Actual", v:fmt$(a.balance+st.net,0),       c:pnlColor(st.net)},
+                  {l:"Net P&L",        v:fmt$(st.net),                   c:pnlColor(st.net)},
+                  {l:"Win Rate",       v:fmtPct(st.winRate),             c:st.winRate>=.5?"#00C076":"#FF3B30"},
+                  {l:"Trades",         v:st.totalTrades,                 c:"#E2E4EA"},
                 ].map(m=>(
                   <div key={m.l} className="acct-stat">
                     <div className="acct-stat-label">{m.l}</div>
@@ -1051,12 +1073,13 @@ function Dashboard({trades,accounts,scope}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TRADE LOG
 // ═══════════════════════════════════════════════════════════════════════════════
-function TradeLog({trades,accounts,onAdd,onDelete}) {
+function TradeLog({trades,accounts,onAdd,onDelete,onEdit}) {
   const [fAsset,setFA]=useState("ALL");
   const [fSide,setFS]=useState("ALL");
   const [fSession,setFSess]=useState("ALL");
   const [fAcct,setFAcct]=useState("ALL");
   const [selected,setSel]=useState(null);
+  const [editing,setEditing]=useState(null);
 
   const filtered=useMemo(()=>{
     let t=[...trades].sort((a,b)=>b.date.localeCompare(a.date));
@@ -1139,7 +1162,7 @@ function TradeLog({trades,accounts,onAdd,onDelete}) {
                   <td style={{fontFamily:"DM Mono"}}>{t.entry.toLocaleString()}</td>
                   <td style={{fontFamily:"DM Mono"}}>{t.exit.toLocaleString()}</td>
                   <td style={{fontFamily:"DM Mono",fontWeight:800,color:pnlColor(t.pnl)}}>{fmt$(t.pnl)}</td>
-                  <td style={{fontFamily:"DM Mono",color:t.rr>0?"#00C076":"#FF3B30"}}>{t.rr>0?"+":""}{t.rr}R</td>
+                  <td style={{fontFamily:"DM Mono",color:t.rr>0?"#00C076":t.rr<0?"#FF3B30":"#6A6E7A"}}>{fmtRR(t.rr)}</td>
                   <td><span className="tag tag-gray">{t.session}</span></td>
                   <td><span className="tag tag-gray">{t.setup}</span></td>
                 </tr>
@@ -1171,7 +1194,7 @@ function TradeLog({trades,accounts,onAdd,onDelete}) {
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                 {[
                   {l:"P&L",    v:fmt$(selected.pnl),  c:pnlColor(selected.pnl)},
-                  {l:"R:R",    v:selected.rr+"R",      c:selected.rr>0?"#00C076":"#FF3B30"},
+                  {l:"R:R",    v:fmtRR(selected.rr),  c:selected.rr>0?"#00C076":selected.rr<0?"#FF3B30":"#6A6E7A"},
                   {l:"Lado",   v:selected.side,         c:selected.side==="BUY"?"#00C076":"#FF3B30"},
                   {l:"Entrada",v:selected.entry,        c:"#E2E4EA"},
                   {l:"Salida", v:selected.exit,         c:"#E2E4EA"},
@@ -1194,10 +1217,26 @@ function TradeLog({trades,accounts,onAdd,onDelete}) {
               <button className="btn btn-danger" onClick={()=>{onDelete(selected.id);setSel(null);}}>
                 <Ico n="trash" s={13} c="#FF3B30"/> Eliminar
               </button>
+              <button className="btn btn-ghost" style={{color:"#64D2FF",borderColor:"rgba(100,210,255,.3)"}} onClick={()=>{setEditing(selected);setSel(null);}}>
+                ✏️ Editar
+              </button>
               <button className="btn btn-ghost" onClick={()=>setSel(null)}>Cerrar</button>
             </div>
           </div>
         </div>
+      )}
+      {editing && (
+        <AddTradeModal
+          accounts={accounts.filter(a=>!a.isDemo)}
+          defaultAcct={editing.accountId}
+          onClose={()=>setEditing(null)}
+          onSave={t=>{onEdit(t);setEditing(null);}}
+          customAssets={[]}
+          rrPresets={DEFAULT_RR_PRESETS}
+          onAddAsset={()=>{}}
+          onUpdateRrPresets={()=>{}}
+          initialData={editing}
+        />
       )}
     </div>
   );
@@ -1290,7 +1329,7 @@ function CalendarView({trades}) {
                   <td style={{fontWeight:700}}>{t.asset}</td>
                   <td><span className={`tag tag-${t.side.toLowerCase()}`}>{t.side}</span></td>
                   <td style={{fontFamily:"DM Mono",fontWeight:800,color:pnlColor(t.pnl)}}>{fmt$(t.pnl)}</td>
-                  <td style={{fontFamily:"DM Mono",color:t.rr>0?"#00C076":"#FF3B30"}}>{t.rr>0?"+":""}{t.rr}R</td>
+                  <td style={{fontFamily:"DM Mono",color:t.rr>0?"#00C076":t.rr<0?"#FF3B30":"#6A6E7A"}}>{fmtRR(t.rr)}</td>
                   <td><span className="tag tag-gray">{t.setup}</span></td>
                 </tr>
               ))}
@@ -1424,9 +1463,23 @@ function Statistics({trades,accounts}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADD TRADE MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPresets,onAddAsset,onUpdateRrPresets}) {
+function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPresets,onAddAsset,onUpdateRrPresets,initialData}) {
+  const isEdit = !!initialData;
   const allAssets = [...DEFAULT_ASSETS, ...(customAssets||[])];
-  const [f,setF]=useState({
+  const [f,setF]=useState(isEdit ? {
+    date:initialData.date,
+    accountId:initialData.accountId,
+    asset:initialData.asset,
+    side:initialData.side,
+    entry:String(initialData.entry),
+    exit:String(initialData.exit),
+    qty:String(initialData.qty),
+    pnl:String(initialData.pnl),
+    rr:String(initialData.rr),
+    session:initialData.session,
+    setup:initialData.setup,
+    notes:initialData.notes||""
+  } : {
     date:new Date().toISOString().slice(0,10),
     accountId:defaultAcct||accounts[0]?.id||"",
     asset:"US30",side:"BUY",entry:"",exit:"",qty:"1",
@@ -1440,7 +1493,9 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.pnl||!f.asset||!f.side) return;
-    onSave({...f,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0});
+    const data={...f,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0};
+    if(isEdit) onSave({...data, id:initialData.id});
+    else onSave(data);
     onClose();
   };
 
@@ -1469,7 +1524,7 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
         <div className="modal-head">
-          <h3>➕ Añadir Trade</h3>
+          <h3>{isEdit?"✏️ Editar Trade":"➕ Añadir Trade"}</h3>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
@@ -1771,11 +1826,10 @@ export default function App() {
   const [showDD,    setShowDD]    = useState(false);
   const [showAdd,   setShowAdd]   = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showNavSheet, setShowNavSheet] = useState(false);
   const [theme,     setTheme]     = useState(()=>{ try{return localStorage.getItem(LS_THEME)||"dark";}catch{return "dark";} });
   const [toasts,    setToasts]    = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
-  // Ref para evitar sobreescribir datos durante la carga inicial
-  const skipSaveRef = useRef(true);
 
   // Firebase Auth state listener — auto-login / logout
   useEffect(()=>{
@@ -1797,12 +1851,10 @@ export default function App() {
         if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
         if(!data.customAssets) data.customAssets = [];
         const u = { id: firebaseUser.uid, ...data };
-        skipSaveRef.current = true; // Bloquear guardado durante carga inicial
         setUser(u);
         setTrades(u.trades||[]);
         setActAccts((u.accounts||[]).map(a=>a.id));
       } else {
-        skipSaveRef.current = true;
         setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
       }
       setAuthLoading(false);
@@ -1813,10 +1865,7 @@ export default function App() {
   // Persistir trades y accounts en Firestore cuando cambian
   useEffect(()=>{
     if(!user||!auth.currentUser) return;
-    // Si estamos en carga inicial, saltar este ciclo y desbloquear para el próximo
-    if(skipSaveRef.current) { skipSaveRef.current = false; return; }
-    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts})
-      .catch(()=>{}); // errores manejados dentro de fbSaveUserData
+    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
   },[trades, user]);
 
   const login = useCallback(() => {
@@ -1853,6 +1902,7 @@ export default function App() {
   },[]);
 
   const addTrade = useCallback(t => setTrades(p=>[...p,{...t,id:Date.now()}]),[]);
+  const editTrade = useCallback(t => setTrades(p=>p.map(x=>x.id===t.id?t:x)),[]);
   const delTrade = useCallback(id => setTrades(p=>p.filter(t=>t.id!==id)),[]);
   const addAccount = useCallback(a => {
     setUser(u=>({...u,accounts:[...u.accounts,a]}));
@@ -1989,9 +2039,6 @@ export default function App() {
               <div style={{fontSize:11,color:"#4A4E5A",fontFamily:"DM Mono"}}>
                 {new Date().toLocaleDateString("es-DO",{day:"2-digit",month:"short",year:"numeric"})}
               </div>
-              <button className="mobile-settings-btn" onClick={()=>setShowSettings(true)} title="Configuración">
-                <Ico n="gear" s={18} c="#6A6E7A"/>
-              </button>
               <button className="btn btn-primary btn-sm topbar-add" onClick={()=>{
                 const hasRealAcct = user.accounts.some(a=>!a.isDemo);
                 if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");return;}
@@ -2048,7 +2095,7 @@ export default function App() {
           </div>
 
           {tab==="dashboard" && <Dashboard trades={visibleTrades} accounts={visibleAccounts} scope={scope}/>}
-          {tab==="journal"   && <TradeLog  trades={visibleTrades} accounts={user.accounts} onAdd={()=>setShowAdd(true)} onDelete={delTrade}/>}
+          {tab==="journal"   && <TradeLog  trades={visibleTrades} accounts={user.accounts} onAdd={()=>setShowAdd(true)} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="calendar"  && <CalendarView trades={visibleTrades}/>}
           {tab==="stats"     && <Statistics   trades={visibleTrades} accounts={visibleAccounts}/>}
           {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount}/>}
@@ -2061,38 +2108,59 @@ export default function App() {
 
       {/* MOBILE BOTTOM NAV */}
       <nav className="bottom-nav">
-        {NAV.slice(0,2).map(n=>(
-          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
-            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
-            <span className="bn-label">{n.id==="dashboard"?"Inicio":"Trades"}</span>
+        {/* Hamburger / Menu button */}
+        <div className={`bn-menu-btn${showNavSheet?" active":""}`} onClick={()=>setShowNavSheet(v=>!v)}>
+          <div className="bn-menu-icon">
+            <span/><span/><span/>
           </div>
-        ))}
-        {NAV.slice(2,3).map(n=>(
-          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
-            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
-            <span className="bn-label">Cal</span>
+          <span className="bn-menu-label">Menú</span>
+        </div>
+
+        {/* Current tab display */}
+        <div className="bn-cur-tab" onClick={()=>setShowNavSheet(true)}>
+          <div className="bn-cur-label">Viendo</div>
+          <div className="bn-cur-name">
+            {tab==="dashboard"?"Inicio":tab==="journal"?"Trades":tab==="calendar"?"Calendario":tab==="stats"?"Stats":"Cuentas"}
           </div>
-        ))}
-        <div className="bn-item" onClick={()=>{
+        </div>
+
+        {/* Square + Add Trade button */}
+        <div className="bn-add-btn" onClick={()=>{
           const hasRealAcct = user.accounts.some(a=>!a.isDemo);
-          if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");return;}
+          if(!hasRealAcct){addToast("⚠️ Crea una cuenta propia primero en 'Mis Cuentas'","error");setTab("accounts");setShowNavSheet(false);return;}
           setShowAdd(true);
         }}>
-          <div style={{width:36,height:36,borderRadius:"50%",background:"#00C076",display:"flex",alignItems:"center",justifyContent:"center",marginTop:-18,boxShadow:"0 0 20px rgba(0,192,118,.4)"}}>
-            <Ico n="plus" s={20} c="#fff"/>
-          </div>
-        </div>
-        {NAV.slice(3,4).map(n=>(
-          <div key={n.id} className={`bn-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
-            <Ico n={n.icon} s={20} c={tab===n.id?"#00C076":"#4A4E5A"}/>
-            <span className="bn-label">Stats</span>
-          </div>
-        ))}
-        <div className="bn-item" onClick={()=>setShowSettings(true)}>
-          <Ico n="gear" s={20} c="#4A4E5A"/>
-          <span className="bn-label">Config</span>
+          <Ico n="plus" s={24} c="#fff"/>
         </div>
       </nav>
+
+      {/* NAV SHEET */}
+      {showNavSheet && (
+        <>
+          <div className="nav-sheet-overlay" onClick={()=>setShowNavSheet(false)}/>
+          <div className="nav-sheet">
+            <div className="nav-sheet-handle"/>
+            <div className="nav-sheet-grid">
+              {NAV.map(n=>(
+                <div key={n.id} className={`nav-sheet-item${tab===n.id?" active":""}`}
+                  onClick={()=>{setTab(n.id);setShowNavSheet(false);}}>
+                  <Ico n={n.icon} s={22} c={tab===n.id?"#00C076":"#4A4E5A"}/>
+                  <span className="nav-sheet-label">
+                    {n.id==="dashboard"?"Inicio":n.id==="journal"?"Trades":n.id==="calendar"?"Cal":n.id==="stats"?"Stats":"Cuentas"}
+                  </span>
+                </div>
+              ))}
+              <div className="nav-sheet-item" onClick={()=>{setShowSettings(true);setShowNavSheet(false);}}>
+                <Ico n="settings" s={22} c="#4A4E5A"/>
+                <span className="nav-sheet-label">Config</span>
+              </div>
+            </div>
+            <div className="nav-sheet-footer">
+              <span style={{fontSize:11,color:"#3A3E4A"}}>SVF Journal · Smart Money Only</span>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
