@@ -85,7 +85,7 @@ const fmtRR    = v => v===0?"0":v<0?`${v}`:`1:${v}`;
 const acctType = id => ACCOUNT_TYPES.find(a=>a.id===id)||ACCOUNT_TYPES[0];
 
 function calcStats(trades) {
-  if (!trades.length) return {net:0,winRate:0,pf:0,avgWin:0,avgLoss:0,expectancy:0,totalTrades:0,wins:0,losses:0,maxDD:0,bestTrade:0,worstTrade:0,avgRR:0};
+  if (!trades.length) return {net:0,winRate:0,pf:0,avgWin:0,avgLoss:0,expectancy:0,totalTrades:0,wins:0,losses:0,maxDD:0,maxDDPct:0,bestTrade:0,worstTrade:0,avgRR:0};
   const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<0);
   const net=trades.reduce((a,t)=>a+t.pnl,0);
   const grossW=wins.reduce((a,t)=>a+t.pnl,0);
@@ -96,9 +96,9 @@ function calcStats(trades) {
   const pf=grossL>0?grossW/grossL:grossW>0?999:0;
   const expectancy=winRate*avgWin-(1-winRate)*avgLoss;
   const avgRR=trades.filter(t=>t.rr>0).reduce((a,t)=>a+t.rr,0)/(trades.filter(t=>t.rr>0).length||1);
-  let peak=0,bal=0,maxDD=0;
-  [...trades].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{bal+=t.pnl;if(bal>peak)peak=bal;const dd=peak-bal;if(dd>maxDD)maxDD=dd;});
-  return {net,winRate,pf,avgWin,avgLoss,expectancy,totalTrades:trades.length,wins:wins.length,losses:losses.length,maxDD,bestTrade:Math.max(...trades.map(t=>t.pnl)),worstTrade:Math.min(...trades.map(t=>t.pnl)),avgRR};
+  let peak=0,bal=0,maxDD=0,maxDDPct=0;
+  [...trades].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{bal+=t.pnl;if(bal>peak)peak=bal;const dd=peak-bal;if(dd>maxDD){maxDD=dd;maxDDPct=peak>0?(dd/peak)*100:0;}});
+  return {net,winRate,pf,avgWin,avgLoss,expectancy,totalTrades:trades.length,wins:wins.length,losses:losses.length,maxDD,maxDDPct,bestTrade:Math.max(...trades.map(t=>t.pnl)),worstTrade:Math.min(...trades.map(t=>t.pnl)),avgRR};
 }
 
 function buildEquity(trades, start=5000) {
@@ -215,9 +215,9 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 @media(min-width:769px){
   .bottom-nav{display:none !important;}
 }
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:68px;background:#0C0E13;
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:calc(68px + env(safe-area-inset-bottom));background:#0C0E13;
   border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-between;
-  z-index:100;padding:0 16px;gap:12px;}
+  z-index:100;padding:0 16px;padding-bottom:calc(env(safe-area-inset-bottom) + 8px);gap:12px;}
 .bn-add-btn{width:52px;height:52px;border-radius:14px;background:#00C076;display:flex;
   align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
   box-shadow:0 0 24px rgba(0,192,118,.45);transition:transform .15s,box-shadow .15s;}
@@ -950,7 +950,7 @@ function Dashboard({trades,accounts,scope}) {
           {l:"Avg Win",      v:fmt$(st.avgWin),                  c:"#00C076",            sub:"por trade ganador"},
           {l:"Avg Loss",     v:fmt$(st.avgLoss),                 c:"#FF3B30",            sub:"por trade perdedor"},
           {l:"Expectancy",   v:fmt$(st.expectancy),              c:pnlColor(st.expectancy),sub:"por trade"},
-          {l:"Max Drawdown", v:fmt$(st.maxDD),                   c:"#FF9F0A",            sub:"pico a valle"},
+          {l:"Max Drawdown", v:fmt$(st.maxDD),                   c:"#FF9F0A",            sub:`${st.maxDDPct.toFixed(1)}% del pico`},
           {l:"Avg R:R",      v:st.avgRR.toFixed(2)+"R",          c:"#64D2FF",            sub:"trades ganadores"},
         ].map(m=>(
           <div key={m.l} className="metric-card">
@@ -1248,7 +1248,10 @@ function TradeLog({trades,accounts,onAdd,onDelete,onEdit}) {
 const MNAMES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DOWS=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
-function CalendarView({trades}) {
+function CalendarView({trades,accounts,onDelete,onEdit}) {
+  const [selected,setSel]=useState(null);
+  const [editing,setEditing]=useState(null);
+  const getAcct=id=>(accounts||[]).find(a=>a.id===id);
   const [year,setY]=useState(2026);
   const [month,setM]=useState(0);
   const today=new Date();
@@ -1324,7 +1327,7 @@ function CalendarView({trades}) {
             <thead><tr><th>Fecha</th><th>Activo</th><th>Lado</th><th>P&L</th><th>R:R</th><th>Setup</th></tr></thead>
             <tbody>
               {[...monTrades].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>(
-                <tr key={t.id}>
+                <tr key={t.id} onClick={()=>setSel(t)} style={{cursor:"pointer"}}>
                   <td style={{color:"#6A6E7A"}}>{t.date}</td>
                   <td style={{fontWeight:700}}>{t.asset}</td>
                   <td><span className={`tag tag-${t.side.toLowerCase()}`}>{t.side}</span></td>
@@ -1336,6 +1339,71 @@ function CalendarView({trades}) {
             </tbody>
           </table>
         </div>
+      )}
+      {selected && (
+        <div className="modal-overlay" onClick={()=>setSel(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-head">
+              <span style={{fontSize:22}}>{acctType(getAcct(selected.accountId)?.type||"real").icon}</span>
+              <h3>{selected.asset} — {selected.date}</h3>
+              <button className="modal-close" onClick={()=>setSel(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              {getAcct(selected.accountId) && (
+                <div style={{background:"#141620",borderRadius:9,padding:"10px 14px",fontSize:12.5,color:"#6A6E7A",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:16}}>{acctType(getAcct(selected.accountId).type).icon}</span>
+                  <span style={{color:"#A0A4B0",fontWeight:600}}>{getAcct(selected.accountId).name}</span>
+                  <span style={{marginLeft:"auto",color:acctType(getAcct(selected.accountId).type).color,fontWeight:700}}>
+                    {acctType(getAcct(selected.accountId).type).label}
+                  </span>
+                </div>
+              )}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                {[
+                  {l:"P&L",    v:fmt$(selected.pnl),       c:pnlColor(selected.pnl)},
+                  {l:"R:R",    v:fmtRR(selected.rr),       c:selected.rr>0?"#00C076":selected.rr<0?"#FF3B30":"#6A6E7A"},
+                  {l:"Lado",   v:selected.side,              c:selected.side==="BUY"?"#00C076":"#FF3B30"},
+                  {l:"Entrada",v:selected.entry,             c:"#E2E4EA"},
+                  {l:"Salida", v:selected.exit,              c:"#E2E4EA"},
+                  {l:"Sesión", v:selected.session,       c:"#64D2FF"},
+                  {l:"Setup",  v:selected.setup,             c:"#FFD60A"},
+                  {l:"Qty",    v:selected.qty,               c:"#E2E4EA"},
+                ].map(m=>(
+                  <div key={m.l} style={{background:"#141620",borderRadius:9,padding:"10px 12px"}}>
+                    <div style={{fontSize:10,color:"#4A4E5A",marginBottom:4}}>{m.l}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:m.c,fontFamily:"DM Mono"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+              {selected.notes&&<div style={{background:"#141620",borderRadius:9,padding:"12px"}}>
+                <div style={{fontSize:10,color:"#4A4E5A",marginBottom:4}}>NOTAS</div>
+                <div style={{fontSize:13.5,color:"#A0A4B0"}}>{selected.notes}</div>
+              </div>}
+            </div>
+            <div className="modal-foot">
+              {onDelete && <button className="btn btn-danger" onClick={()=>{onDelete(selected.id);setSel(null);}}>
+                <Ico n="trash" s={13} c="#FF3B30"/> Eliminar
+              </button>}
+              {onEdit && <button className="btn btn-ghost" style={{color:"#64D2FF",borderColor:"rgba(100,210,255,.3)"}} onClick={()=>{setEditing(selected);setSel(null);}}>
+                ✏️ Editar
+              </button>}
+              <button className="btn btn-ghost" onClick={()=>setSel(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {editing && (
+        <AddTradeModal
+          accounts={(accounts||[]).filter(a=>!a.isDemo)}
+          defaultAcct={editing.accountId}
+          onClose={()=>setEditing(null)}
+          onSave={t=>{onEdit&&onEdit(t);setEditing(null);}}
+          customAssets={[]}
+          rrPresets={DEFAULT_RR_PRESETS}
+          onAddAsset={()=>{}}
+          onUpdateRrPresets={()=>{}}
+          initialData={editing}
+        />
       )}
     </div>
   );
@@ -1388,7 +1456,7 @@ function Statistics({trades,accounts}) {
             {k:"Avg Loss",            v:fmt$(st.avgLoss),      c:"#FF3B30"},
             {k:"Mejor Trade",         v:fmt$(st.bestTrade),    c:"#00C076"},
             {k:"Peor Trade",          v:fmt$(st.worstTrade),   c:"#FF3B30"},
-            {k:"Max Drawdown",        v:fmt$(st.maxDD),        c:"#FF9F0A"},
+            {k:"Max Drawdown",        v:`${fmt$(st.maxDD)} (${st.maxDDPct.toFixed(1)}%)`,        c:"#FF9F0A"},
             {k:"Avg R:R ganadores",   v:st.avgRR.toFixed(2)+"R"},
           ].map(m=>(
             <div key={m.k} className="stats-row-item">
@@ -2096,7 +2164,7 @@ export default function App() {
 
           {tab==="dashboard" && <Dashboard trades={visibleTrades} accounts={visibleAccounts} scope={scope}/>}
           {tab==="journal"   && <TradeLog  trades={visibleTrades} accounts={user.accounts} onAdd={()=>setShowAdd(true)} onDelete={delTrade} onEdit={editTrade}/>}
-          {tab==="calendar"  && <CalendarView trades={visibleTrades}/>}
+          {tab==="calendar"  && <CalendarView trades={visibleTrades} accounts={user.accounts} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="stats"     && <Statistics   trades={visibleTrades} accounts={visibleAccounts}/>}
           {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount}/>}
         </main>
