@@ -15,7 +15,7 @@ import {
   deleteUser as firebaseDeleteUser,
 } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc
+  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, runTransaction, increment
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
@@ -46,6 +46,30 @@ async function fbSaveUserData(uid, data) {
   try {
     await setDoc(doc(db, "users", uid), data, { merge: true });
   } catch(e) { console.error("fbSave:", e); }
+}
+
+// ─── ADMIN HELPERS ────────────────────────────────────────────────────────────
+const ADMIN_EMAIL = "donovanjms@gmail.com";
+const MAX_USERS   = 165;
+
+async function fbGetStats() {
+  try {
+    const snap = await getDoc(doc(db, "config", "stats"));
+    return snap.exists() ? snap.data() : { userCount: 0 };
+  } catch { return { userCount: 0 }; }
+}
+
+async function fbIncrementUserCount() {
+  try {
+    await setDoc(doc(db, "config", "stats"), { userCount: increment(1) }, { merge: true });
+  } catch(e) { console.error("increment:", e); }
+}
+
+async function fbGetAllUsers() {
+  try {
+    const snap = await getDocs(collection(db, "users"));
+    return snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  } catch { return []; }
 }
 
 const DEMO_SEED_DATA = {
@@ -563,6 +587,7 @@ function Login() {
   const [rEmail,setREmail]=useState("");
   const [rPass,setRPass]=useState("");
   const [rPass2,setRPass2]=useState("");
+  const [rCode,setRCode]=useState("");
   const [fpEmail,setFpEmail]=useState("");
   const [fpResult,setFpResult]=useState(null);
   const [err,setErr]=useState("");
@@ -582,21 +607,31 @@ function Login() {
     }
   };
 
+  const VALID_CODE = "SMO-VIP-2026";
   const handleRegister = async () => {
     setErr("");
     if(!rName.trim()) return setErr("Ingresa tu nombre.");
     if(!rEmail.includes("@")) return setErr("Email inválido.");
     if(rPass.length<6) return setErr("Contraseña: mínimo 6 caracteres.");
     if(rPass!==rPass2) return setErr("Las contraseñas no coinciden.");
+    if(rCode.trim().toUpperCase()!==VALID_CODE) return setErr("Código de acceso inválido. Contacta a SMO para obtenerlo.");
     setLoading(true);
     try {
+      // Check user limit
+      const stats = await fbGetStats();
+      if((stats.userCount||0) >= MAX_USERS) {
+        setErr("Se ha alcanzado el límite de accesos VIP (165). Contacta a SMO.");
+        setLoading(false); return;
+      }
       const cred = await createUserWithEmailAndPassword(auth, rEmail.trim().toLowerCase(), rPass);
       await fbSaveUserData(cred.user.uid, {
         name: rName.trim(),
         email: rEmail.trim().toLowerCase(),
         accounts: [],
         trades: [],
+        registeredAt: new Date().toISOString(),
       });
+      await fbIncrementUserCount();
       // onLogin triggered via onAuthStateChanged
     } catch(e) {
       const msg = e.code==="auth/email-already-in-use"
@@ -674,8 +709,18 @@ function Login() {
             </div>
             <div className="form-group">
               <label className="form-label">Repetir Contraseña</label>
-              <input className="form-input" type="password" value={rPass2} onChange={e=>setRPass2(e.target.value)} placeholder="Repite tu contraseña"
+              <input className="form-input" type="password" value={rPass2} onChange={e=>setRPass2(e.target.value)} placeholder="Repite tu contraseña"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label" style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:14}}>🔑</span> Código de Acceso SMO
+              </label>
+              <input className="form-input" type="text" value={rCode}
+                onChange={e=>setRCode(e.target.value.toUpperCase())}
+                placeholder="Ej: SMO-VIP-2026"
+                style={{letterSpacing:2,fontFamily:"DM Mono",fontWeight:600}}
                 onKeyDown={e=>e.key==="Enter"&&handleRegister()}/>
+              <div style={{fontSize:11,color:"#4A4E5A",marginTop:4}}>¿No tienes código? Contacta a tu asesor SMO.</div>
             </div>
             <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={handleRegister} disabled={loading}>
               {loading?"Creando cuenta...":"Crear Cuenta"}
@@ -1446,6 +1491,111 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+function AdminPanel() {
+  const [stats,setStats]   = useState(null);
+  const [users,setUsers]   = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [search,setSearch] = useState("");
+
+  useEffect(()=>{
+    (async()=>{
+      const [s,u] = await Promise.all([fbGetStats(), fbGetAllUsers()]);
+      setStats(s);
+      setUsers(u.sort((a,b)=>(a.registeredAt||"").localeCompare(b.registeredAt||"")));
+      setLoading(false);
+    })();
+  },[]);
+
+  const filtered = users.filter(u=>
+    (u.name||"").toLowerCase().includes(search.toLowerCase()) ||
+    (u.email||"").toLowerCase().includes(search.toLowerCase())
+  );
+
+  if(loading) return <div className="content" style={{textAlign:"center",paddingTop:60,color:"#4A4E5A"}}>Cargando panel admin…</div>;
+
+  const userCount = stats?.userCount || users.length;
+  const pct = ((userCount/MAX_USERS)*100).toFixed(1);
+
+  return (
+    <div className="content">
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <div style={{fontSize:24}}>🛡️</div>
+        <div>
+          <div style={{fontSize:16,fontWeight:800,color:"#E2E4EA"}}>Panel de Administrador</div>
+          <div style={{fontSize:12,color:"#4A4E5A"}}>Solo visible para donovanjms@gmail.com</div>
+        </div>
+      </div>
+
+      {/* Stats cards */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+        {[
+          {l:"Usuarios Registrados", v:userCount,            c:"#00C076",  icon:"👥"},
+          {l:"Cupos Disponibles",    v:MAX_USERS-userCount,  c:"#64D2FF",  icon:"🎟️"},
+          {l:"Capacidad Usada",      v:pct+"%",               c:"#FFD60A",  icon:"📊"},
+        ].map(m=>(
+          <div key={m.l} style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 16px"}}>
+            <div style={{fontSize:20,marginBottom:6}}>{m.icon}</div>
+            <div style={{fontSize:22,fontWeight:800,color:m.c,fontFamily:"DM Mono"}}>{m.v}</div>
+            <div style={{fontSize:10,color:"#4A4E5A",marginTop:4,fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>{m.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Progress bar */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:700,color:"#C0C4D0"}}>Accesos VIP utilizados</span>
+          <span style={{fontSize:12,fontFamily:"DM Mono",color:"#00C076"}}>{userCount} / {MAX_USERS}</span>
+        </div>
+        <div style={{background:"#1A1C24",borderRadius:20,height:8,overflow:"hidden"}}>
+          <div style={{height:"100%",borderRadius:20,width:pct+"%",
+            background: userCount>=MAX_USERS?"#FF3B30":userCount>140?"#FFD60A":"#00C076",
+            transition:"width .3s"}}/>
+        </div>
+      </div>
+
+      {/* User list */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,overflow:"hidden"}}>
+        <div style={{padding:"14px 18px",borderBottom:"1px solid #1A1C24",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#E2E4EA",flex:1}}>Lista de Usuarios ({filtered.length})</div>
+          <input
+            className="form-input"
+            placeholder="🔍 Buscar por nombre o email…"
+            value={search}
+            onChange={e=>setSearch(e.target.value)}
+            style={{width:220,padding:"7px 12px",fontSize:12}}
+          />
+        </div>
+        <div style={{maxHeight:400,overflowY:"auto"}}>
+          {filtered.length===0 && <div style={{padding:30,textAlign:"center",color:"#4A4E5A"}}>Sin resultados</div>}
+          {filtered.map((u,i)=>(
+            <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 18px",
+              borderBottom:"1px solid #1A1C24",background:i%2===0?"transparent":"rgba(255,255,255,.01)"}}>
+              <div style={{width:32,height:32,borderRadius:10,background:"#1A1C24",display:"flex",
+                alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#00C076",flexShrink:0}}>
+                {(u.name||"?")[0].toUpperCase()}
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#E2E4EA",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.name||"Sin nombre"}</div>
+                <div style={{fontSize:11,color:"#4A4E5A",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.email||"—"}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:11,color:"#4A4E5A"}}>{u.accounts?.length||0} cuentas</div>
+                <div style={{fontSize:10,color:"#3A3E4A"}}>{u.registeredAt?u.registeredAt.slice(0,10):"—"}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATISTICS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2035,12 +2185,14 @@ export default function App() {
     return user.accounts.find(a=>a.id===activeAccts[0]);
   },[user,activeAccts,scope]);
 
+  const isAdmin = user?.email === ADMIN_EMAIL;
   const NAV=[
     {id:"dashboard",label:"Dashboard",    icon:"dash"},
     {id:"journal",  label:"Trade Log",    icon:"log"},
     {id:"calendar", label:"Calendario",   icon:"cal"},
     {id:"stats",    label:"Estadísticas", icon:"stats"},
     {id:"accounts", label:"Mis Cuentas",  icon:"accts"},
+    ...(isAdmin?[{id:"admin",label:"Admin",icon:"settings"}]:[]),
   ];
 
   if(authLoading) return <><style>{css}</style><div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0E1117",color:"#00C076",fontSize:16,fontWeight:600}}>Cargando SVF Journal…</div></>;
@@ -2185,6 +2337,7 @@ export default function App() {
           {tab==="calendar"  && <CalendarView trades={visibleTrades} accounts={user.accounts} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="stats"     && <Statistics   trades={visibleTrades} accounts={visibleAccounts}/>}
           {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount}/>}
+          {tab==="admin"     && isAdmin && <AdminPanel/>}
         </main>
       </div>
 
