@@ -717,7 +717,7 @@ function Login() {
               </label>
               <input className="form-input" type="text" value={rCode}
                 onChange={e=>setRCode(e.target.value.toUpperCase())}
-                placeholder="Ej: SMO-VIP-2026"
+                placeholder="Ingresa tu código de acceso"
                 style={{letterSpacing:2,fontFamily:"DM Mono",fontWeight:600}}
                 onKeyDown={e=>e.key==="Enter"&&handleRegister()}/>
               <div style={{fontSize:11,color:"#4A4E5A",marginTop:4}}>¿No tienes código? Contacta a tu asesor SMO.</div>
