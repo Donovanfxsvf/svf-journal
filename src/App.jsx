@@ -940,8 +940,43 @@ function Dashboard({trades,accounts,scope}) {
     </div>
   );
 
+  const totalStartingBalance = accounts.reduce((s,a)=>s+a.balance,0);
+  const totalCurrentBalance  = accounts.reduce((s,a)=>{
+    const acctTrades = trades.filter(t=>t.accountId===a.id);
+    const acctNet    = acctTrades.reduce((x,t)=>x+t.pnl,0);
+    return s+a.balance+acctNet;
+  },0);
+  const totalNet = totalCurrentBalance - totalStartingBalance;
+
   return (
     <div className="content">
+      {/* BALANCE GLOBAL CARD */}
+      <div style={{
+        background:"linear-gradient(135deg,rgba(0,192,118,.10) 0%,rgba(100,210,255,.06) 100%)",
+        border:"1px solid rgba(0,192,118,.22)",
+        borderRadius:14,padding:"18px 22px",marginBottom:20,
+        display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14
+      }}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:"#4A4E5A",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Balance Global de Cuentas</div>
+          <div style={{fontSize:30,fontWeight:800,fontFamily:"DM Mono",color:"#E2E4EA",letterSpacing:-1}}>
+            {fmt$(totalCurrentBalance,0)}
+          </div>
+          <div style={{fontSize:12,color:"#4A4E5A",marginTop:4}}>
+            Capital inicial: <span style={{color:"#6A6E7A",fontWeight:600}}>{fmt$(totalStartingBalance,0)}</span>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#4A4E5A",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Net P&L Total</div>
+          <div style={{fontSize:26,fontWeight:800,fontFamily:"DM Mono",color:pnlColor(totalNet)}}>
+            {totalNet>=0?"+":""}{fmt$(totalNet,0)}
+          </div>
+          <div style={{fontSize:12,color:pnlColor(totalNet),marginTop:4,fontWeight:600}}>
+            {totalStartingBalance>0?((totalNet/totalStartingBalance)*100).toFixed(2)+"%":"—"}
+          </div>
+        </div>
+      </div>
+
       {/* KPIs */}
       <div className="metrics-row">
         {[
