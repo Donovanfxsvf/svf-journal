@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react"; 
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -215,24 +215,25 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 @media(min-width:769px){
   .bottom-nav{display:none !important;}
 }
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:calc(68px + env(safe-area-inset-bottom));background:#0C0E13;
-  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-between;
-  z-index:100;padding:0 16px;padding-bottom:calc(env(safe-area-inset-bottom) + 8px);gap:12px;}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:calc(62px + env(safe-area-inset-bottom));background:#0C0E13;
+  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:center;
+  z-index:100;padding:0 20px;padding-bottom:env(safe-area-inset-bottom);gap:20px;}
 .bn-add-btn{width:52px;height:52px;border-radius:14px;background:#00C076;display:flex;
   align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
   box-shadow:0 0 24px rgba(0,192,118,.45);transition:transform .15s,box-shadow .15s;}
 .bn-add-btn:active{transform:scale(.93);box-shadow:0 0 12px rgba(0,192,118,.3);}
-.bn-menu-btn{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 16px;
-  cursor:pointer;border-radius:12px;transition:background .15s;flex:1;}
+.bn-menu-btn{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 12px;
+  cursor:pointer;border-radius:12px;transition:background .15s;}
 .bn-menu-btn:active{background:#161820;}
 .bn-menu-icon{display:flex;flex-direction:column;gap:4px;align-items:center;}
 .bn-menu-icon span{display:block;width:20px;height:2px;border-radius:2px;background:#4A4E5A;transition:background .15s;}
 .bn-menu-btn.active .bn-menu-icon span{background:#00C076;}
 .bn-menu-label{font-size:10px;font-weight:600;color:#4A4E5A;}
 .bn-menu-btn.active .bn-menu-label{color:#00C076;}
-.bn-cur-tab{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 4px;}
-.bn-cur-label{font-size:10px;color:#4A4E5A;font-weight:600;letter-spacing:.5px;text-transform:uppercase;}
-.bn-cur-name{font-size:13px;font-weight:700;color:#E2E4EA;}
+.bn-cur-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 10px;
+  cursor:pointer;border-radius:12px;transition:background .15s;min-width:70px;}
+.bn-cur-label{display:none;}
+.bn-cur-name{font-size:12px;font-weight:700;color:#E2E4EA;}
 
 /* NAV SHEET */
 .nav-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;backdrop-filter:blur(4px);}
