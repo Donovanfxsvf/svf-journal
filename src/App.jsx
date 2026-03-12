@@ -72,6 +72,12 @@ async function fbGetAllUsers() {
   } catch { return []; }
 }
 
+async function fbSetUserBanned(uid, banned) {
+  try {
+    await updateDoc(doc(db, "users", uid), { banned });
+  } catch(e) { console.error("ban:", e); }
+}
+
 const DEMO_SEED_DATA = {
   customAssets: [],
   rrPresets: [...DEFAULT_RR_PRESETS],
@@ -1500,6 +1506,8 @@ function AdminPanel() {
   const [users,setUsers]   = useState([]);
   const [loading,setLoading] = useState(true);
   const [search,setSearch] = useState("");
+  const [toggling,setToggling] = useState(null);
+  const [confirm,setConfirm] = useState(null); // {uid, name, banned}
 
   useEffect(()=>{
     (async()=>{
@@ -1510,6 +1518,14 @@ function AdminPanel() {
     })();
   },[]);
 
+  const handleToggleBan = async (uid, currentBanned) => {
+    setToggling(uid);
+    await fbSetUserBanned(uid, !currentBanned);
+    setUsers(prev => prev.map(u => u.uid===uid ? {...u, banned:!currentBanned} : u));
+    setToggling(null);
+    setConfirm(null);
+  };
+
   const filtered = users.filter(u=>
     (u.name||"").toLowerCase().includes(search.toLowerCase()) ||
     (u.email||"").toLowerCase().includes(search.toLowerCase())
@@ -1517,11 +1533,40 @@ function AdminPanel() {
 
   if(loading) return <div className="content" style={{textAlign:"center",paddingTop:60,color:"#4A4E5A"}}>Cargando panel admin…</div>;
 
+  const activeUsers = users.filter(u=>!u.banned).length;
   const userCount = stats?.userCount || users.length;
-  const pct = ((userCount/MAX_USERS)*100).toFixed(1);
+  const pct = ((activeUsers/MAX_USERS)*100).toFixed(1);
 
   return (
     <div className="content">
+      {/* Confirm modal */}
+      {confirm && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",display:"flex",alignItems:"center",
+          justifyContent:"center",zIndex:9999,padding:20}}>
+          <div style={{background:"#13151D",border:"1px solid #2A2C34",borderRadius:16,padding:28,maxWidth:340,width:"100%"}}>
+            <div style={{fontSize:20,marginBottom:12}}>{confirm.banned?"🔓":"🚫"}</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#E2E4EA",marginBottom:8}}>
+              {confirm.banned ? "¿Restaurar acceso?" : "¿Revocar acceso?"}
+            </div>
+            <div style={{fontSize:13,color:"#6A6E7A",marginBottom:20}}>
+              {confirm.banned
+                ? `${confirm.name} podrá volver a ingresar al Journal.`
+                : `${confirm.name} será desconectado inmediatamente y no podrá iniciar sesión.`}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setConfirm(null)}>Cancelar</button>
+              <button className="btn" style={{flex:1,
+                background:confirm.banned?"#00C076":"#FF3B30",color:"#fff",
+                border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontWeight:700}}
+                onClick={()=>handleToggleBan(confirm.uid, confirm.banned)}
+                disabled={toggling===confirm.uid}>
+                {toggling===confirm.uid ? "…" : confirm.banned ? "Restaurar" : "Revocar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
         <div style={{fontSize:24}}>🛡️</div>
@@ -1534,9 +1579,9 @@ function AdminPanel() {
       {/* Stats cards */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
         {[
-          {l:"Usuarios Registrados", v:userCount,            c:"#00C076",  icon:"👥"},
-          {l:"Cupos Disponibles",    v:MAX_USERS-userCount,  c:"#64D2FF",  icon:"🎟️"},
-          {l:"Capacidad Usada",      v:pct+"%",               c:"#FFD60A",  icon:"📊"},
+          {l:"Accesos Activos",   v:activeUsers,              c:"#00C076", icon:"👥"},
+          {l:"Cupos Disponibles", v:MAX_USERS-activeUsers,    c:"#64D2FF", icon:"🎟️"},
+          {l:"Capacidad Usada",   v:pct+"%",                  c:"#FFD60A", icon:"📊"},
         ].map(m=>(
           <div key={m.l} style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 16px"}}>
             <div style={{fontSize:20,marginBottom:6}}>{m.icon}</div>
@@ -1549,12 +1594,12 @@ function AdminPanel() {
       {/* Progress bar */}
       <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-          <span style={{fontSize:12,fontWeight:700,color:"#C0C4D0"}}>Accesos VIP utilizados</span>
-          <span style={{fontSize:12,fontFamily:"DM Mono",color:"#00C076"}}>{userCount} / {MAX_USERS}</span>
+          <span style={{fontSize:12,fontWeight:700,color:"#C0C4D0"}}>Accesos VIP activos</span>
+          <span style={{fontSize:12,fontFamily:"DM Mono",color:"#00C076"}}>{activeUsers} / {MAX_USERS}</span>
         </div>
         <div style={{background:"#1A1C24",borderRadius:20,height:8,overflow:"hidden"}}>
           <div style={{height:"100%",borderRadius:20,width:pct+"%",
-            background: userCount>=MAX_USERS?"#FF3B30":userCount>140?"#FFD60A":"#00C076",
+            background: activeUsers>=MAX_USERS?"#FF3B30":activeUsers>140?"#FFD60A":"#00C076",
             transition:"width .3s"}}/>
         </div>
       </div>
@@ -1562,7 +1607,9 @@ function AdminPanel() {
       {/* User list */}
       <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,overflow:"hidden"}}>
         <div style={{padding:"14px 18px",borderBottom:"1px solid #1A1C24",display:"flex",alignItems:"center",gap:12}}>
-          <div style={{fontSize:14,fontWeight:700,color:"#E2E4EA",flex:1}}>Lista de Usuarios ({filtered.length})</div>
+          <div style={{fontSize:14,fontWeight:700,color:"#E2E4EA",flex:1}}>
+            Lista de Usuarios ({filtered.length})
+          </div>
           <input
             className="form-input"
             placeholder="🔍 Buscar por nombre o email…"
@@ -1571,22 +1618,47 @@ function AdminPanel() {
             style={{width:220,padding:"7px 12px",fontSize:12}}
           />
         </div>
-        <div style={{maxHeight:400,overflowY:"auto"}}>
+        <div style={{maxHeight:450,overflowY:"auto"}}>
           {filtered.length===0 && <div style={{padding:30,textAlign:"center",color:"#4A4E5A"}}>Sin resultados</div>}
           {filtered.map((u,i)=>(
             <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 18px",
-              borderBottom:"1px solid #1A1C24",background:i%2===0?"transparent":"rgba(255,255,255,.01)"}}>
-              <div style={{width:32,height:32,borderRadius:10,background:"#1A1C24",display:"flex",
-                alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#00C076",flexShrink:0}}>
-                {(u.name||"?")[0].toUpperCase()}
+              borderBottom:"1px solid #1A1C24",
+              background: u.banned ? "rgba(255,59,48,.05)" : i%2===0?"transparent":"rgba(255,255,255,.01)",
+              opacity: u.banned ? 0.7 : 1}}>
+              <div style={{width:32,height:32,borderRadius:10,
+                background: u.banned ? "#2A1A1A" : "#1A1C24",display:"flex",
+                alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,
+                color: u.banned ? "#FF3B30" : "#00C076",flexShrink:0}}>
+                {u.banned ? "🚫" : (u.name||"?")[0].toUpperCase()}
               </div>
               <div style={{flex:1,overflow:"hidden"}}>
-                <div style={{fontSize:13,fontWeight:600,color:"#E2E4EA",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.name||"Sin nombre"}</div>
+                <div style={{fontSize:13,fontWeight:600,
+                  color: u.banned ? "#8A4A4A" : "#E2E4EA",
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  {u.name||"Sin nombre"}
+                  {u.banned && <span style={{fontSize:10,color:"#FF3B30",marginLeft:6,fontWeight:700}}>ACCESO REVOCADO</span>}
+                </div>
                 <div style={{fontSize:11,color:"#4A4E5A",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.email||"—"}</div>
               </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:11,color:"#4A4E5A"}}>{u.accounts?.length||0} cuentas</div>
-                <div style={{fontSize:10,color:"#3A3E4A"}}>{u.registeredAt?u.registeredAt.slice(0,10):"—"}</div>
+              <div style={{textAlign:"right",flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
+                <div>
+                  <div style={{fontSize:11,color:"#4A4E5A"}}>{u.accounts?.length||0} cuentas</div>
+                  <div style={{fontSize:10,color:"#3A3E4A"}}>{u.registeredAt?u.registeredAt.slice(0,10):"—"}</div>
+                </div>
+                {u.email !== ADMIN_EMAIL && (
+                  <button
+                    onClick={()=>setConfirm({uid:u.uid, name:u.name||u.email, banned:!!u.banned})}
+                    disabled={toggling===u.uid}
+                    style={{
+                      background: u.banned ? "rgba(0,192,118,.1)" : "rgba(255,59,48,.1)",
+                      border: `1px solid ${u.banned?"#00C076":"#FF3B30"}`,
+                      borderRadius:8,padding:"5px 10px",cursor:"pointer",
+                      color: u.banned ? "#00C076" : "#FF3B30",
+                      fontSize:11,fontWeight:700,whiteSpace:"nowrap",transition:"all .2s"
+                    }}>
+                    {toggling===u.uid ? "…" : u.banned ? "🔓 Restaurar" : "🚫 Revocar"}
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -2082,6 +2154,12 @@ export default function App() {
             ...DEMO_SEED_DATA,
           };
           await fbSaveUserData(firebaseUser.uid, data);
+        }
+        // Check if banned
+        if(data && data.banned) {
+          await signOut(auth);
+          setAuthLoading(false);
+          return;
         }
         // Ensure rrPresets exists for legacy users
         if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
