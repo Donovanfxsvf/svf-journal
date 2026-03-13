@@ -829,8 +829,9 @@ function AcctDropdown({user,activeAccounts,onToggle,onClose,onManage}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACCOUNT MANAGEMENT PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
+function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) {
   const [showAdd,setShowAdd]=useState(false);
+  const [editing,setEditing]=useState(null); // account being edited
   const [form,setForm]=useState({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -838,6 +839,18 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
     if(!form.name||!form.balance) return;
     onAddAccount({...form,balance:parseFloat(form.balance),id:"a"+Date.now(),active:true});
     setShowAdd(false);
+    setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
+  };
+
+  const openEdit=(a)=>{
+    setEditing(a);
+    setForm({name:a.name,type:a.type,broker:a.broker||"",balance:String(a.balance),currency:a.currency||"USD"});
+  };
+
+  const handleEdit=()=>{
+    if(!form.name||!form.balance) return;
+    onEditAccount({...editing,...form,balance:parseFloat(form.balance)});
+    setEditing(null);
     setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   };
 
@@ -879,9 +892,18 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
                 {!a.isDemo && (
-                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
-                    <Ico n="trash" s={12} c="#FF3B30"/>
-                  </button>
+                  <div style={{display:"flex",gap:6}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>openEdit(a)} title="Editar cuenta"
+                      style={{border:"1px solid #2A2C34",padding:"5px 8px"}}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64D2FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
+                      <Ico n="trash" s={12} c="#FF3B30"/>
+                    </button>
+                  </div>
                 )}
               </div>
               <div className="acct-card-stats">
@@ -902,6 +924,59 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
           );
         })}
       </div>
+
+      {/* Edit account modal */}
+      {editing && (
+        <div className="modal-overlay" onClick={()=>setEditing(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>✏️ Editar Cuenta</h3>
+              <button className="modal-close" onClick={()=>setEditing(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Nombre de la cuenta</label>
+                <input className="form-input" placeholder='ej: "FTMO $100K Fase 1"' value={form.name} onChange={e=>set("name",e.target.value)}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tipo de cuenta</label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {ACCOUNT_TYPES.map(at=>(
+                    <div key={at.id} onClick={()=>set("type",at.id)} style={{
+                      border:`2px solid ${form.type===at.id?at.color:"#252830"}`,
+                      background:form.type===at.id?at.color+"15":"#161820",
+                      borderRadius:10,padding:"10px 12px",cursor:"pointer",transition:"all .15s",
+                      display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:18}}>{at.icon}</span>
+                      <span style={{fontSize:13,fontWeight:600,color:form.type===at.id?at.color:"#6A6E7A"}}>{at.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Broker / Firma</label>
+                  <input className="form-input" placeholder='ej: "FTMO"' value={form.broker} onChange={e=>set("broker",e.target.value)}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Moneda</label>
+                  <select className="form-select" value={form.currency} onChange={e=>set("currency",e.target.value)}>
+                    {["USD","EUR","GBP","CHF"].map(c=><option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Saldo Inicial</label>
+                <input className="form-input" type="number" placeholder="ej: 100000" value={form.balance} onChange={e=>set("balance",e.target.value)}/>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setEditing(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleEdit}>Guardar Cambios</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add account modal */}
       {showAdd && (
@@ -2223,6 +2298,12 @@ export default function App() {
     setUser(u=>({...u,accounts:[...u.accounts,a]}));
     setActAccts(p=>[...p,a.id]);
   },[]);
+  const editAccount = useCallback(updated => {
+    const next = user.accounts.map(a => a.id===updated.id ? updated : a);
+    setUser(u=>({...u,accounts:next}));
+    fbSaveUserData(auth.currentUser.uid, {accounts:next});
+  },[user]);
+
   const delAccount = useCallback(id => {
     setUser(u=>({...u,accounts:u.accounts.filter(a=>a.id!==id)}));
     setActAccts(p=>p.filter(x=>x!==id));
@@ -2427,7 +2508,7 @@ export default function App() {
           {tab==="journal"   && <TradeLog  trades={visibleTrades} accounts={user.accounts} onAdd={()=>setShowAdd(true)} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="calendar"  && <CalendarView trades={visibleTrades} accounts={user.accounts} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="stats"     && <Statistics   trades={visibleTrades} accounts={visibleAccounts}/>}
-          {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount}/>}
+          {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount} onEditAccount={editAccount}/>}
           {tab==="admin"     && isAdmin && <AdminPanel/>}
         </main>
       </div>
