@@ -831,7 +831,11 @@ function AcctDropdown({user,activeAccounts,onToggle,onClose,onManage}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) {
   const [showAdd,setShowAdd]=useState(false);
-  const [editing,setEditing]=useState(null); // account being edited
+  const [editing,setEditing]=useState(null);
+  const [delTarget,setDelTarget]=useState(null); // account to delete
+  const [delPass,setDelPass]=useState("");
+  const [delErr,setDelErr]=useState("");
+  const [delLoading,setDelLoading]=useState(false);
   const [form,setForm]=useState({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -852,6 +856,26 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
     onEditAccount({...editing,...form,balance:parseFloat(form.balance)});
     setEditing(null);
     setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
+  };
+
+  const openDelete=(a)=>{
+    setDelTarget(a);
+    setDelPass("");
+    setDelErr("");
+  };
+
+  const handleDelete=async()=>{
+    if(!delPass) return setDelErr("Ingresa tu contraseña.");
+    setDelLoading(true); setDelErr("");
+    try {
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, delPass);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      onDeleteAccount(delTarget.id);
+      setDelTarget(null); setDelPass("");
+    } catch(e) {
+      setDelErr("Contraseña incorrecta. Intenta de nuevo.");
+    }
+    setDelLoading(false);
   };
 
   return (
@@ -900,7 +924,7 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                       </svg>
                     </button>
-                    <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
+                    <button className="btn btn-danger btn-sm" onClick={()=>openDelete(a)}>
                       <Ico n="trash" s={12} c="#FF3B30"/>
                     </button>
                   </div>
@@ -924,6 +948,40 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
           );
         })}
       </div>
+
+      {/* Delete confirm modal */}
+      {delTarget && (
+        <div className="modal-overlay" onClick={()=>setDelTarget(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
+            <div className="modal-head">
+              <h3>🗑️ Eliminar Cuenta</h3>
+              <button className="modal-close" onClick={()=>setDelTarget(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.2)",
+                borderRadius:10,padding:"12px 14px",marginBottom:16,fontSize:13,color:"#FF6B6B",lineHeight:1.6}}>
+                ⚠️ Vas a eliminar la cuenta <strong style={{color:"#FF3B30"}}>"{delTarget.name}"</strong> y todos sus trades. Esta acción es <strong>irreversible</strong>.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirma tu contraseña para continuar</label>
+                <input className="form-input" type="password" placeholder="••••••••"
+                  value={delPass} onChange={e=>{setDelPass(e.target.value);setDelErr("");}}
+                  onKeyDown={e=>e.key==="Enter"&&handleDelete()}
+                  autoFocus/>
+                {delErr && <div style={{color:"#FF3B30",fontSize:12,marginTop:6}}>{delErr}</div>}
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setDelTarget(null)}>Cancelar</button>
+              <button className="btn" style={{background:"#FF3B30",color:"#fff",border:"none",
+                borderRadius:8,padding:"10px 20px",fontWeight:700,cursor:"pointer",opacity:delLoading?.6:1}}
+                onClick={handleDelete} disabled={delLoading}>
+                {delLoading ? "Verificando…" : "Eliminar Cuenta"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit account modal */}
       {editing && (
