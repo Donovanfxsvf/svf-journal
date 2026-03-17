@@ -210,6 +210,13 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
   .mini-stat-v{font-size:14px;}
   .cal-day{min-height:52px;padding:5px 4px;}
   .cal-pnl{font-size:11px;}
+  .cal-header-row{grid-template-columns:repeat(7,1fr) 60px;}
+  .cal-grid{grid-template-columns:repeat(7,1fr) 60px;}
+  .cal-week-card{padding:4px 3px;min-height:52px;gap:2px;}
+  .cal-week-label{font-size:7.5px;letter-spacing:.3px;}
+  .cal-week-val{font-size:10px;}
+  .cal-week-wr{font-size:8px;}
+  .cal-week-ops{font-size:7.5px;}
   /* Scope toggle — visible y compacto en mobile */
   .scope-toggle{height:28px;}
   .scope-btn{padding:0 7px;font-size:10.5px;gap:2px;}
@@ -387,9 +394,9 @@ tbody td{padding:11px 14px;color:#A0A4B0;white-space:nowrap;}
 .progress-fill{height:100%;border-radius:3px;transition:width .5s;}
 
 /* CALENDAR */
-.cal-header-row{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;}
+.cal-header-row{display:grid;grid-template-columns:repeat(7,1fr) 110px;gap:4px;margin-bottom:4px;}
 .cal-dow{text-align:center;font-size:10.5px;font-weight:700;color:#4A4E5A;padding:4px 0;}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr) 110px;gap:4px;}
 .cal-day{border-radius:9px;padding:8px 6px;min-height:70px;background:#141620;border:1px solid #1A1C24;cursor:pointer;transition:all .15s;}
 .cal-day:hover{border-color:#252830;}
 .cal-day.empty{background:transparent;border-color:transparent;cursor:default;}
@@ -399,12 +406,15 @@ tbody td{padding:11px 14px;color:#A0A4B0;white-space:nowrap;}
 .cal-num{font-size:11px;font-weight:700;color:#4A4E5A;margin-bottom:3px;}
 .cal-pnl{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
 .cal-trades{font-size:10px;color:#4A4E5A;margin-top:1px;}
-.cal-week-summary{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:12px;
-  padding:5px 10px;background:#0A0C10;border-radius:7px;margin:2px 0 6px;border:1px solid #141620;}
-.cal-week-label{font-size:10px;font-weight:700;color:#3A3E4A;letter-spacing:.5px;text-transform:uppercase;margin-right:auto;}
-.cal-week-val{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
-.cal-week-pct{font-size:10.5px;font-weight:600;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:5px;}
-.theme-light .cal-week-summary{background:#F5F6FA;border-color:#DDE0E8;}
+.cal-week-card{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:#0A0C10;border:1px solid #1A1C24;border-radius:9px;padding:8px 6px;min-height:70px;gap:4px;}
+.cal-week-card.has-trades{border-color:#1A3D22;}
+.cal-week-label{font-size:9px;font-weight:700;color:#3A3E4A;letter-spacing:.8px;text-transform:uppercase;}
+.cal-week-val{font-size:14px;font-weight:800;font-family:'DM Mono',monospace;letter-spacing:-.5px;}
+.cal-week-wr{font-size:10px;font-weight:600;font-family:'DM Mono',monospace;}
+.cal-week-ops{font-size:9px;color:#4A4E5A;font-weight:600;}
+.theme-light .cal-week-card{background:#F5F6FA;border-color:#DDE0E8;}
+.theme-light .cal-week-card.has-trades{border-color:#C0E8D5;}
 
 /* STATS */
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
@@ -1545,17 +1555,21 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
       const weekCells=cells.slice(i,Math.min(i+7,cells.length));
       // pad last week to 7 if needed
       while(weekCells.length<7) weekCells.push(null);
-      let weekPnl=0, weekCount=0;
+      let weekPnl=0, weekCount=0, weekWins=0;
       weekCells.forEach(day=>{
         if(!day) return;
         const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-        const d=daily[key];
-        if(d){weekPnl+=d.pnl;weekCount+=d.count;}
+        // count individual trades for this day
+        const dayTrades = trades.filter(t=>t.date===key);
+        dayTrades.forEach(t=>{
+          weekPnl+=t.pnl; weekCount++; if(t.pnl>0) weekWins++;
+        });
       });
-      w.push({cells:weekCells,pnl:weekPnl,count:weekCount});
+      const wr = weekCount>0 ? weekWins/weekCount : 0;
+      w.push({cells:weekCells,pnl:weekPnl,count:weekCount,wr});
     }
     return w;
-  },[cells,daily,year,month]);
+  },[cells,trades,year,month]);
 
   const goToday=()=>{const n=new Date();setY(n.getFullYear());setM(n.getMonth());};
 
@@ -1582,7 +1596,10 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
         </div>
       </div>
       <div className="chart-card">
-        <div className="cal-header-row">{DOWS.map(d=><div key={d} className="cal-dow">{d}</div>)}</div>
+        <div className="cal-header-row">
+          {DOWS.map(d=><div key={d} className="cal-dow">{d}</div>)}
+          <div className="cal-dow" style={{color:"#00C076",fontSize:9,letterSpacing:".5px"}}>SEMANA</div>
+        </div>
         <div className="cal-grid">
           {weeks.map((wk,wi)=>(
             <React.Fragment key={wi}>
@@ -1599,14 +1616,14 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
                   </div>
                 );
               })}
-              {wk.count>0 && (
-                <div className="cal-week-summary">
+              <div className={`cal-week-card${wk.count>0?" has-trades":""}`}>
+                {wk.count>0 ? <>
                   <span className="cal-week-label">Sem {wi+1}</span>
                   <span className="cal-week-val" style={{color:pnlColor(wk.pnl)}}>{wk.pnl>=0?"+":""}{fmt$(wk.pnl,0)}</span>
-                  {startBalance>0 && <span className="cal-week-pct" style={{color:pnlColor(wk.pnl),background:pnlBg(wk.pnl)}}>{wk.pnl>=0?"+":""}{((wk.pnl/startBalance)*100).toFixed(2)}%</span>}
-                  <span style={{fontSize:10,color:"#4A4E5A"}}>{wk.count} op</span>
-                </div>
-              )}
+                  <span className="cal-week-wr" style={{color:wk.wr>=.5?"#00C076":"#FF3B30"}}>{fmtPct(wk.wr)}</span>
+                  <span className="cal-week-ops">{wk.count} op</span>
+                </> : <span className="cal-week-label" style={{opacity:.4}}>Sem {wi+1}</span>}
+              </div>
             </React.Fragment>
           ))}
         </div>
