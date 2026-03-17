@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -15,7 +15,7 @@ import {
   deleteUser as firebaseDeleteUser,
 } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc
+  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, runTransaction, increment
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
@@ -46,6 +46,37 @@ async function fbSaveUserData(uid, data) {
   try {
     await setDoc(doc(db, "users", uid), data, { merge: true });
   } catch(e) { console.error("fbSave:", e); }
+}
+
+// ─── ADMIN HELPERS ────────────────────────────────────────────────────────────
+const ADMIN_EMAIL = "donovanjms@gmail.com";
+const ADMIN_EMAILS = ["donovanjms@gmail.com", "crmacademyus@gmail.com"];
+const MAX_USERS   = 165;
+
+async function fbGetStats() {
+  try {
+    const snap = await getDoc(doc(db, "config", "stats"));
+    return snap.exists() ? snap.data() : { userCount: 0 };
+  } catch { return { userCount: 0 }; }
+}
+
+async function fbIncrementUserCount() {
+  try {
+    await setDoc(doc(db, "config", "stats"), { userCount: increment(1) }, { merge: true });
+  } catch(e) { console.error("increment:", e); }
+}
+
+async function fbGetAllUsers() {
+  try {
+    const snap = await getDocs(collection(db, "users"));
+    return snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  } catch { return []; }
+}
+
+async function fbSetUserBanned(uid, banned) {
+  try {
+    await updateDoc(doc(db, "users", uid), { banned });
+  } catch(e) { console.error("ban:", e); }
 }
 
 const DEMO_SEED_DATA = {
@@ -85,7 +116,7 @@ const fmtRR    = v => v===0?"0":v<0?`${v}`:`1:${v}`;
 const acctType = id => ACCOUNT_TYPES.find(a=>a.id===id)||ACCOUNT_TYPES[0];
 
 function calcStats(trades) {
-  if (!trades.length) return {net:0,winRate:0,pf:0,avgWin:0,avgLoss:0,expectancy:0,totalTrades:0,wins:0,losses:0,maxDD:0,bestTrade:0,worstTrade:0,avgRR:0};
+  if (!trades.length) return {net:0,winRate:0,pf:0,avgWin:0,avgLoss:0,expectancy:0,totalTrades:0,wins:0,losses:0,maxDD:0,maxDDPct:0,bestTrade:0,worstTrade:0,avgRR:0};
   const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<0);
   const net=trades.reduce((a,t)=>a+t.pnl,0);
   const grossW=wins.reduce((a,t)=>a+t.pnl,0);
@@ -96,12 +127,12 @@ function calcStats(trades) {
   const pf=grossL>0?grossW/grossL:grossW>0?999:0;
   const expectancy=winRate*avgWin-(1-winRate)*avgLoss;
   const avgRR=trades.filter(t=>t.rr>0).reduce((a,t)=>a+t.rr,0)/(trades.filter(t=>t.rr>0).length||1);
-  let peak=0,bal=0,maxDD=0;
-  [...trades].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{bal+=t.pnl;if(bal>peak)peak=bal;const dd=peak-bal;if(dd>maxDD)maxDD=dd;});
-  return {net,winRate,pf,avgWin,avgLoss,expectancy,totalTrades:trades.length,wins:wins.length,losses:losses.length,maxDD,bestTrade:Math.max(...trades.map(t=>t.pnl)),worstTrade:Math.min(...trades.map(t=>t.pnl)),avgRR};
+  let peak=0,bal=0,maxDD=0,maxDDPct=0;
+  [...trades].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{bal+=t.pnl;if(bal>peak)peak=bal;const dd=peak-bal;if(dd>maxDD){maxDD=dd;maxDDPct=peak>0?(dd/peak)*100:0;}});
+  return {net,winRate,pf,avgWin,avgLoss,expectancy,totalTrades:trades.length,wins:wins.length,losses:losses.length,maxDD,maxDDPct,bestTrade:Math.max(...trades.map(t=>t.pnl)),worstTrade:Math.min(...trades.map(t=>t.pnl)),avgRR};
 }
 
-function buildEquity(trades, start=5000) {
+function buildEquity(trades, start=0) {
   const sorted=[...trades].sort((a,b)=>a.date.localeCompare(b.date));
   let bal=start;
   const out=[{date:"Inicio",balance:bal}];
@@ -215,24 +246,25 @@ body{font-family:'DM Sans',sans-serif;background:#080A0D;color:#E2E4EA;}
 @media(min-width:769px){
   .bottom-nav{display:none !important;}
 }
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:68px;background:#0C0E13;
-  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:space-between;
-  z-index:100;padding:0 16px;gap:12px;}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:calc(62px + env(safe-area-inset-bottom));background:#0C0E13;
+  border-top:1px solid #1A1C24;display:none;align-items:center;justify-content:center;
+  z-index:100;padding:0 20px;padding-bottom:env(safe-area-inset-bottom);gap:20px;}
 .bn-add-btn{width:52px;height:52px;border-radius:14px;background:#00C076;display:flex;
   align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
   box-shadow:0 0 24px rgba(0,192,118,.45);transition:transform .15s,box-shadow .15s;}
 .bn-add-btn:active{transform:scale(.93);box-shadow:0 0 12px rgba(0,192,118,.3);}
-.bn-menu-btn{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 16px;
-  cursor:pointer;border-radius:12px;transition:background .15s;flex:1;}
+.bn-menu-btn{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 12px;
+  cursor:pointer;border-radius:12px;transition:background .15s;}
 .bn-menu-btn:active{background:#161820;}
 .bn-menu-icon{display:flex;flex-direction:column;gap:4px;align-items:center;}
 .bn-menu-icon span{display:block;width:20px;height:2px;border-radius:2px;background:#4A4E5A;transition:background .15s;}
 .bn-menu-btn.active .bn-menu-icon span{background:#00C076;}
 .bn-menu-label{font-size:10px;font-weight:600;color:#4A4E5A;}
 .bn-menu-btn.active .bn-menu-label{color:#00C076;}
-.bn-cur-tab{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 4px;}
-.bn-cur-label{font-size:10px;color:#4A4E5A;font-weight:600;letter-spacing:.5px;text-transform:uppercase;}
-.bn-cur-name{font-size:13px;font-weight:700;color:#E2E4EA;}
+.bn-cur-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 10px;
+  cursor:pointer;border-radius:12px;transition:background .15s;min-width:70px;}
+.bn-cur-label{display:none;}
+.bn-cur-name{font-size:12px;font-weight:700;color:#E2E4EA;}
 
 /* NAV SHEET */
 .nav-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;backdrop-filter:blur(4px);}
@@ -367,6 +399,12 @@ tbody td{padding:11px 14px;color:#A0A4B0;white-space:nowrap;}
 .cal-num{font-size:11px;font-weight:700;color:#4A4E5A;margin-bottom:3px;}
 .cal-pnl{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
 .cal-trades{font-size:10px;color:#4A4E5A;margin-top:1px;}
+.cal-week-summary{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:12px;
+  padding:5px 10px;background:#0A0C10;border-radius:7px;margin:2px 0 6px;border:1px solid #141620;}
+.cal-week-label{font-size:10px;font-weight:700;color:#3A3E4A;letter-spacing:.5px;text-transform:uppercase;margin-right:auto;}
+.cal-week-val{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
+.cal-week-pct{font-size:10.5px;font-weight:600;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:5px;}
+.theme-light .cal-week-summary{background:#F5F6FA;border-color:#DDE0E8;}
 
 /* STATS */
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
@@ -562,6 +600,7 @@ function Login() {
   const [rEmail,setREmail]=useState("");
   const [rPass,setRPass]=useState("");
   const [rPass2,setRPass2]=useState("");
+  const [rCode,setRCode]=useState("");
   const [fpEmail,setFpEmail]=useState("");
   const [fpResult,setFpResult]=useState(null);
   const [err,setErr]=useState("");
@@ -581,21 +620,31 @@ function Login() {
     }
   };
 
+  const VALID_CODE = "SMO-VIP-2026";
   const handleRegister = async () => {
     setErr("");
     if(!rName.trim()) return setErr("Ingresa tu nombre.");
     if(!rEmail.includes("@")) return setErr("Email inválido.");
     if(rPass.length<6) return setErr("Contraseña: mínimo 6 caracteres.");
     if(rPass!==rPass2) return setErr("Las contraseñas no coinciden.");
+    if(rCode.trim().toUpperCase()!==VALID_CODE) return setErr("Código de acceso inválido. Contacta a SMO para obtenerlo.");
     setLoading(true);
     try {
+      // Check user limit
+      const stats = await fbGetStats();
+      if((stats.userCount||0) >= MAX_USERS) {
+        setErr("Se ha alcanzado el límite de accesos VIP (165). Contacta a SMO.");
+        setLoading(false); return;
+      }
       const cred = await createUserWithEmailAndPassword(auth, rEmail.trim().toLowerCase(), rPass);
       await fbSaveUserData(cred.user.uid, {
         name: rName.trim(),
         email: rEmail.trim().toLowerCase(),
         accounts: [],
         trades: [],
+        registeredAt: new Date().toISOString(),
       });
+      await fbIncrementUserCount();
       // onLogin triggered via onAuthStateChanged
     } catch(e) {
       const msg = e.code==="auth/email-already-in-use"
@@ -673,8 +722,18 @@ function Login() {
             </div>
             <div className="form-group">
               <label className="form-label">Repetir Contraseña</label>
-              <input className="form-input" type="password" value={rPass2} onChange={e=>setRPass2(e.target.value)} placeholder="Repite tu contraseña"
+              <input className="form-input" type="password" value={rPass2} onChange={e=>setRPass2(e.target.value)} placeholder="Repite tu contraseña"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label" style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:14}}>🔑</span> Código de Acceso SMO
+              </label>
+              <input className="form-input" type="text" value={rCode}
+                onChange={e=>setRCode(e.target.value.toUpperCase())}
+                placeholder="Ingresa tu código de acceso"
+                style={{letterSpacing:2,fontFamily:"DM Mono",fontWeight:600}}
                 onKeyDown={e=>e.key==="Enter"&&handleRegister()}/>
+              <div style={{fontSize:11,color:"#4A4E5A",marginTop:4}}>¿No tienes código? Contacta a tu asesor SMO.</div>
             </div>
             <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={handleRegister} disabled={loading}>
               {loading?"Creando cuenta...":"Crear Cuenta"}
@@ -776,16 +835,60 @@ function AcctDropdown({user,activeAccounts,onToggle,onClose,onManage}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACCOUNT MANAGEMENT PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
+function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) {
   const [showAdd,setShowAdd]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [delTarget,setDelTarget]=useState(null); // account to delete
+  const [delPass,setDelPass]=useState("");
+  const [delErr,setDelErr]=useState("");
+  const [delLoading,setDelLoading]=useState(false);
+  const [showDemoRemoval,setShowDemoRemoval]=useState(false);
   const [form,setForm]=useState({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
+  const MAX_ACCOUNTS = 10;
+
   const handleAdd=()=>{
     if(!form.name||!form.balance) return;
+    const realAccounts = user.accounts.filter(a=>!a.isDemo);
+    if(realAccounts.length >= MAX_ACCOUNTS) return;
+    const hadOnlyDemo = !user.accounts.some(a=>!a.isDemo);
     onAddAccount({...form,balance:parseFloat(form.balance),id:"a"+Date.now(),active:true});
     setShowAdd(false);
     setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
+    if(hadOnlyDemo && user.accounts.some(a=>a.isDemo)) setShowDemoRemoval(true);
+  };
+
+  const openEdit=(a)=>{
+    setEditing(a);
+    setForm({name:a.name,type:a.type,broker:a.broker||"",balance:String(a.balance),currency:a.currency||"USD"});
+  };
+
+  const handleEdit=()=>{
+    if(!form.name||!form.balance) return;
+    onEditAccount({...editing,...form,balance:parseFloat(form.balance)});
+    setEditing(null);
+    setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
+  };
+
+  const openDelete=(a)=>{
+    setDelTarget(a);
+    setDelPass("");
+    setDelErr("");
+  };
+
+  const handleDelete=async()=>{
+    if(!delPass) return setDelErr("Ingresa tu contraseña.");
+    setDelLoading(true); setDelErr("");
+    try {
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, delPass);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      onDeleteAccount(delTarget.id);
+      setDelTarget(null); setDelPass("");
+    } catch(e) {
+      setDelErr("Contraseña incorrecta. Intenta de nuevo.");
+    }
+    setDelLoading(false);
   };
 
   return (
@@ -793,9 +896,9 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
       <div style={{display:"flex",alignItems:"center",marginBottom:20,gap:12}}>
         <div style={{flex:1}}>
           <div style={{fontSize:15,fontWeight:700}}>Mis Cuentas</div>
-          <div style={{fontSize:12,color:"#4A4E5A",marginTop:2}}>{user.accounts.length} cuenta{user.accounts.length!==1?"s":""} registrada{user.accounts.length!==1?"s":""}</div>
+          <div style={{fontSize:12,color:"#4A4E5A",marginTop:2}}>{user.accounts.filter(a=>!a.isDemo).length} de {MAX_ACCOUNTS} cuentas · {user.accounts.length} total{user.accounts.some(a=>a.isDemo)?" (incl. demo)":""}</div>
         </div>
-        <button className="btn btn-primary" onClick={()=>setShowAdd(true)}>
+        <button className="btn btn-primary" onClick={()=>setShowAdd(true)} disabled={user.accounts.filter(a=>!a.isDemo).length>=MAX_ACCOUNTS}>
           <Ico n="plus" s={14} c="#fff"/> Nueva Cuenta
         </button>
       </div>
@@ -826,9 +929,18 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
                 {!a.isDemo && (
-                  <button className="btn btn-danger btn-sm" onClick={()=>onDeleteAccount(a.id)}>
-                    <Ico n="trash" s={12} c="#FF3B30"/>
-                  </button>
+                  <div style={{display:"flex",gap:6}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>openEdit(a)} title="Editar cuenta"
+                      style={{border:"1px solid #2A2C34",padding:"5px 8px"}}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64D2FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={()=>openDelete(a)}>
+                      <Ico n="trash" s={12} c="#FF3B30"/>
+                    </button>
+                  </div>
                 )}
               </div>
               <div className="acct-card-stats">
@@ -850,12 +962,100 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
         })}
       </div>
 
+      {/* Delete confirm modal */}
+      {delTarget && (
+        <div className="modal-overlay" onClick={()=>setDelTarget(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
+            <div className="modal-head">
+              <h3>🗑️ Eliminar Cuenta</h3>
+              <button className="modal-close" onClick={()=>setDelTarget(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.2)",
+                borderRadius:10,padding:"12px 14px",marginBottom:16,fontSize:13,color:"#FF6B6B",lineHeight:1.6}}>
+                ⚠️ Vas a eliminar la cuenta <strong style={{color:"#FF3B30"}}>"{delTarget.name}"</strong> y todos sus trades. Esta acción es <strong>irreversible</strong>.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirma tu contraseña para continuar</label>
+                <input className="form-input" type="password" placeholder="••••••••"
+                  value={delPass} onChange={e=>{setDelPass(e.target.value);setDelErr("");}}
+                  onKeyDown={e=>e.key==="Enter"&&handleDelete()}
+                  autoFocus/>
+                {delErr && <div style={{color:"#FF3B30",fontSize:12,marginTop:6}}>{delErr}</div>}
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setDelTarget(null)}>Cancelar</button>
+              <button className="btn" style={{background:"#FF3B30",color:"#fff",border:"none",
+                borderRadius:8,padding:"10px 20px",fontWeight:700,cursor:"pointer",opacity:delLoading?.6:1}}
+                onClick={handleDelete} disabled={delLoading}>
+                {delLoading ? "Verificando…" : "Eliminar Cuenta"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit account modal */}
+      {editing && (
+        <div className="modal-overlay" onClick={()=>setEditing(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>✏️ Editar Cuenta</h3>
+              <button className="modal-close" onClick={()=>setEditing(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Nombre de la cuenta</label>
+                <input className="form-input" placeholder='ej: "FTMO $100K Fase 1"' value={form.name} onChange={e=>set("name",e.target.value)}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tipo de cuenta</label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {ACCOUNT_TYPES.map(at=>(
+                    <div key={at.id} onClick={()=>set("type",at.id)} style={{
+                      border:`2px solid ${form.type===at.id?at.color:"#252830"}`,
+                      background:form.type===at.id?at.color+"15":"#161820",
+                      borderRadius:10,padding:"10px 12px",cursor:"pointer",transition:"all .15s",
+                      display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:18}}>{at.icon}</span>
+                      <span style={{fontSize:13,fontWeight:600,color:form.type===at.id?at.color:"#6A6E7A"}}>{at.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Broker / Firma</label>
+                  <input className="form-input" placeholder='ej: "FTMO"' value={form.broker} onChange={e=>set("broker",e.target.value)}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Moneda</label>
+                  <select className="form-select" value={form.currency} onChange={e=>set("currency",e.target.value)}>
+                    {["USD","EUR","GBP","CHF"].map(c=><option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Saldo Inicial</label>
+                <input className="form-input" type="number" placeholder="ej: 100000" value={form.balance} onChange={e=>set("balance",e.target.value)}/>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setEditing(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleEdit}>Guardar Cambios</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add account modal */}
       {showAdd && (
         <div className="modal-overlay" onClick={()=>setShowAdd(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-head">
               <h3>➕ Nueva Cuenta</h3>
+              <span style={{fontSize:11,color:"#4A4E5A",fontWeight:600}}>{MAX_ACCOUNTS - user.accounts.filter(a=>!a.isDemo).length} disponibles</span>
               <button className="modal-close" onClick={()=>setShowAdd(false)}>×</button>
             </div>
             <div className="modal-body">
@@ -902,6 +1102,33 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
           </div>
         </div>
       )}
+
+      {/* Demo removal prompt */}
+      {showDemoRemoval && (
+        <div className="modal-overlay" onClick={()=>setShowDemoRemoval(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+            <div className="modal-head">
+              <h3>🧪 Eliminar Cuenta Demo</h3>
+              <button className="modal-close" onClick={()=>setShowDemoRemoval(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{textAlign:"center",fontSize:40,marginBottom:8}}>🎉</div>
+              <div style={{fontSize:14,fontWeight:600,textAlign:"center",color:"#E2E4EA",marginBottom:8}}>¡Tu primera cuenta real fue creada!</div>
+              <div style={{fontSize:13,color:"#6A6E7A",textAlign:"center",lineHeight:1.6}}>
+                La cuenta de demostración ya no es necesaria. ¿Deseas eliminarla junto con sus trades de ejemplo?
+              </div>
+            </div>
+            <div className="modal-foot" style={{justifyContent:"center",gap:12}}>
+              <button className="btn btn-ghost" onClick={()=>setShowDemoRemoval(false)}>Mantener Demo</button>
+              <button className="btn btn-danger" onClick={()=>{
+                const demoAcct = user.accounts.find(a=>a.isDemo);
+                if(demoAcct) onDeleteAccount(demoAcct.id);
+                setShowDemoRemoval(false);
+              }}>Eliminar Demo</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -911,7 +1138,8 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function Dashboard({trades,accounts,scope}) {
   const st=useMemo(()=>calcStats(trades),[trades]);
-  const eq=useMemo(()=>buildEquity(trades),[trades]);
+  const startBalance=accounts.reduce((s,a)=>s+a.balance,0);
+  const eq=useMemo(()=>buildEquity(trades,startBalance),[trades,startBalance]);
   const dailyPnl=useMemo(()=>{
     const map={};
     trades.forEach(t=>{map[t.date]=(map[t.date]||0)+t.pnl;});
@@ -939,8 +1167,43 @@ function Dashboard({trades,accounts,scope}) {
     </div>
   );
 
+  const totalStartingBalance = accounts.reduce((s,a)=>s+a.balance,0);
+  const totalCurrentBalance  = accounts.reduce((s,a)=>{
+    const acctTrades = trades.filter(t=>t.accountId===a.id);
+    const acctNet    = acctTrades.reduce((x,t)=>x+t.pnl,0);
+    return s+a.balance+acctNet;
+  },0);
+  const totalNet = totalCurrentBalance - totalStartingBalance;
+
   return (
     <div className="content">
+      {/* BALANCE GLOBAL CARD */}
+      <div style={{
+        background:"linear-gradient(135deg,rgba(0,192,118,.10) 0%,rgba(100,210,255,.06) 100%)",
+        border:"1px solid rgba(0,192,118,.22)",
+        borderRadius:14,padding:"18px 22px",marginBottom:20,
+        display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14
+      }}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:"#4A4E5A",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Balance Global de Cuentas</div>
+          <div style={{fontSize:30,fontWeight:800,fontFamily:"DM Mono",color:"#E2E4EA",letterSpacing:-1}}>
+            {fmt$(totalCurrentBalance,0)}
+          </div>
+          <div style={{fontSize:12,color:"#4A4E5A",marginTop:4}}>
+            Capital inicial: <span style={{color:"#6A6E7A",fontWeight:600}}>{fmt$(totalStartingBalance,0)}</span>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#4A4E5A",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>Net P&L Total</div>
+          <div style={{fontSize:26,fontWeight:800,fontFamily:"DM Mono",color:pnlColor(totalNet)}}>
+            {totalNet>=0?"+":""}{fmt$(totalNet,0)}
+          </div>
+          <div style={{fontSize:12,color:pnlColor(totalNet),marginTop:4,fontWeight:600}}>
+            {totalStartingBalance>0?((totalNet/totalStartingBalance)*100).toFixed(2)+"%":"—"}
+          </div>
+        </div>
+      </div>
+
       {/* KPIs */}
       <div className="metrics-row">
         {[
@@ -950,7 +1213,7 @@ function Dashboard({trades,accounts,scope}) {
           {l:"Avg Win",      v:fmt$(st.avgWin),                  c:"#00C076",            sub:"por trade ganador"},
           {l:"Avg Loss",     v:fmt$(st.avgLoss),                 c:"#FF3B30",            sub:"por trade perdedor"},
           {l:"Expectancy",   v:fmt$(st.expectancy),              c:pnlColor(st.expectancy),sub:"por trade"},
-          {l:"Max Drawdown", v:fmt$(st.maxDD),                   c:"#FF9F0A",            sub:"pico a valle"},
+          {l:"Max Drawdown", v:`${st.maxDDPct.toFixed(2)}%`,     c:"#FF9F0A",            sub:"del pico de balance"},
           {l:"Avg R:R",      v:st.avgRR.toFixed(2)+"R",          c:"#64D2FF",            sub:"trades ganadores"},
         ].map(m=>(
           <div key={m.l} className="metric-card">
@@ -1248,9 +1511,12 @@ function TradeLog({trades,accounts,onAdd,onDelete,onEdit}) {
 const MNAMES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DOWS=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
-function CalendarView({trades}) {
-  const [year,setY]=useState(2026);
-  const [month,setM]=useState(0);
+function CalendarView({trades,accounts,onDelete,onEdit}) {
+  const [selected,setSel]=useState(null);
+  const [editing,setEditing]=useState(null);
+  const getAcct=id=>(accounts||[]).find(a=>a.id===id);
+  const [year,setY]=useState(()=>new Date().getFullYear());
+  const [month,setM]=useState(()=>new Date().getMonth());
   const today=new Date();
   const todayStr=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
 
@@ -1270,6 +1536,29 @@ function CalendarView({trades}) {
   const prev=()=>month===0?[setM(11),setY(y=>y-1)]:setM(m=>m-1);
   const next=()=>month===11?[setM(0),setY(y=>y+1)]:setM(m=>m+1);
 
+  const startBalance = accounts.reduce((s,a)=>s+a.balance,0);
+
+  // Group cells into weeks and compute weekly P&L
+  const weeks = useMemo(()=>{
+    const w=[];
+    for(let i=0;i<cells.length;i+=7){
+      const weekCells=cells.slice(i,Math.min(i+7,cells.length));
+      // pad last week to 7 if needed
+      while(weekCells.length<7) weekCells.push(null);
+      let weekPnl=0, weekCount=0;
+      weekCells.forEach(day=>{
+        if(!day) return;
+        const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+        const d=daily[key];
+        if(d){weekPnl+=d.pnl;weekCount+=d.count;}
+      });
+      w.push({cells:weekCells,pnl:weekPnl,count:weekCount});
+    }
+    return w;
+  },[cells,daily,year,month]);
+
+  const goToday=()=>{const n=new Date();setY(n.getFullYear());setM(n.getMonth());};
+
   return (
     <div className="content">
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,flexWrap:"wrap"}}>
@@ -1277,6 +1566,7 @@ function CalendarView({trades}) {
           <button className="btn btn-ghost btn-sm" onClick={prev}><Ico n="chevL" s={14}/></button>
           <span style={{fontSize:18,fontWeight:800,minWidth:170,textAlign:"center"}}>{MNAMES[month]} {year}</span>
           <button className="btn btn-ghost btn-sm" onClick={next}><Ico n="chevR" s={14}/></button>
+          <button className="btn btn-ghost btn-sm" onClick={goToday} style={{marginLeft:4,fontSize:11,color:"#00C076",borderColor:"rgba(0,192,118,.3)"}}>Hoy</button>
         </div>
         <div style={{display:"flex",gap:10,marginLeft:"auto",flexWrap:"wrap"}}>
           {[
@@ -1294,18 +1584,31 @@ function CalendarView({trades}) {
       <div className="chart-card">
         <div className="cal-header-row">{DOWS.map(d=><div key={d} className="cal-dow">{d}</div>)}</div>
         <div className="cal-grid">
-          {cells.map((day,i)=>{
-            if(!day) return <div key={i} className="cal-day empty"/>;
-            const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-            const d=daily[key];
-            let cls="cal-day"+(d?(d.pnl>=0?" win-day":" loss-day"):"")+( key===todayStr?" today":"");
-            return (
-              <div key={i} className={cls}>
-                <div className="cal-num">{day}</div>
-                {d&&<><div className="cal-pnl" style={{color:pnlColor(d.pnl)}}>{fmt$(d.pnl,0)}</div><div className="cal-trades">{d.count} trade{d.count>1?"s":""}</div></>}
-              </div>
-            );
-          })}
+          {weeks.map((wk,wi)=>(
+            <React.Fragment key={wi}>
+              {wk.cells.map((day,di)=>{
+                const ci=wi*7+di;
+                if(!day) return <div key={ci} className="cal-day empty"/>;
+                const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+                const d=daily[key];
+                let cls="cal-day"+(d?(d.pnl>=0?" win-day":" loss-day"):"")+( key===todayStr?" today":"");
+                return (
+                  <div key={ci} className={cls}>
+                    <div className="cal-num">{day}</div>
+                    {d&&<><div className="cal-pnl" style={{color:pnlColor(d.pnl)}}>{fmt$(d.pnl,0)}</div><div className="cal-trades">{d.count} trade{d.count>1?"s":""}</div></>}
+                  </div>
+                );
+              })}
+              {wk.count>0 && (
+                <div className="cal-week-summary">
+                  <span className="cal-week-label">Sem {wi+1}</span>
+                  <span className="cal-week-val" style={{color:pnlColor(wk.pnl)}}>{wk.pnl>=0?"+":""}{fmt$(wk.pnl,0)}</span>
+                  {startBalance>0 && <span className="cal-week-pct" style={{color:pnlColor(wk.pnl),background:pnlBg(wk.pnl)}}>{wk.pnl>=0?"+":""}{((wk.pnl/startBalance)*100).toFixed(2)}%</span>}
+                  <span style={{fontSize:10,color:"#4A4E5A"}}>{wk.count} op</span>
+                </div>
+              )}
+            </React.Fragment>
+          ))}
         </div>
       </div>
       {monTrades.length>0&&(
@@ -1324,7 +1627,7 @@ function CalendarView({trades}) {
             <thead><tr><th>Fecha</th><th>Activo</th><th>Lado</th><th>P&L</th><th>R:R</th><th>Setup</th></tr></thead>
             <tbody>
               {[...monTrades].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>(
-                <tr key={t.id}>
+                <tr key={t.id} onClick={()=>setSel(t)} style={{cursor:"pointer"}}>
                   <td style={{color:"#6A6E7A"}}>{t.date}</td>
                   <td style={{fontWeight:700}}>{t.asset}</td>
                   <td><span className={`tag tag-${t.side.toLowerCase()}`}>{t.side}</span></td>
@@ -1337,6 +1640,242 @@ function CalendarView({trades}) {
           </table>
         </div>
       )}
+      {selected && (
+        <div className="modal-overlay" onClick={()=>setSel(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-head">
+              <span style={{fontSize:22}}>{acctType(getAcct(selected.accountId)?.type||"real").icon}</span>
+              <h3>{selected.asset} — {selected.date}</h3>
+              <button className="modal-close" onClick={()=>setSel(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              {getAcct(selected.accountId) && (
+                <div style={{background:"#141620",borderRadius:9,padding:"10px 14px",fontSize:12.5,color:"#6A6E7A",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:16}}>{acctType(getAcct(selected.accountId).type).icon}</span>
+                  <span style={{color:"#A0A4B0",fontWeight:600}}>{getAcct(selected.accountId).name}</span>
+                  <span style={{marginLeft:"auto",color:acctType(getAcct(selected.accountId).type).color,fontWeight:700}}>
+                    {acctType(getAcct(selected.accountId).type).label}
+                  </span>
+                </div>
+              )}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                {[
+                  {l:"P&L",    v:fmt$(selected.pnl),       c:pnlColor(selected.pnl)},
+                  {l:"R:R",    v:fmtRR(selected.rr),       c:selected.rr>0?"#00C076":selected.rr<0?"#FF3B30":"#6A6E7A"},
+                  {l:"Lado",   v:selected.side,              c:selected.side==="BUY"?"#00C076":"#FF3B30"},
+                  {l:"Entrada",v:selected.entry,             c:"#E2E4EA"},
+                  {l:"Salida", v:selected.exit,              c:"#E2E4EA"},
+                  {l:"Sesión", v:selected.session,       c:"#64D2FF"},
+                  {l:"Setup",  v:selected.setup,             c:"#FFD60A"},
+                  {l:"Qty",    v:selected.qty,               c:"#E2E4EA"},
+                ].map(m=>(
+                  <div key={m.l} style={{background:"#141620",borderRadius:9,padding:"10px 12px"}}>
+                    <div style={{fontSize:10,color:"#4A4E5A",marginBottom:4}}>{m.l}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:m.c,fontFamily:"DM Mono"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+              {selected.notes&&<div style={{background:"#141620",borderRadius:9,padding:"12px"}}>
+                <div style={{fontSize:10,color:"#4A4E5A",marginBottom:4}}>NOTAS</div>
+                <div style={{fontSize:13.5,color:"#A0A4B0"}}>{selected.notes}</div>
+              </div>}
+            </div>
+            <div className="modal-foot">
+              {onDelete && <button className="btn btn-danger" onClick={()=>{onDelete(selected.id);setSel(null);}}>
+                <Ico n="trash" s={13} c="#FF3B30"/> Eliminar
+              </button>}
+              {onEdit && <button className="btn btn-ghost" style={{color:"#64D2FF",borderColor:"rgba(100,210,255,.3)"}} onClick={()=>{setEditing(selected);setSel(null);}}>
+                ✏️ Editar
+              </button>}
+              <button className="btn btn-ghost" onClick={()=>setSel(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {editing && (
+        <AddTradeModal
+          accounts={(accounts||[]).filter(a=>!a.isDemo)}
+          defaultAcct={editing.accountId}
+          onClose={()=>setEditing(null)}
+          onSave={t=>{onEdit&&onEdit(t);setEditing(null);}}
+          customAssets={[]}
+          rrPresets={DEFAULT_RR_PRESETS}
+          onAddAsset={()=>{}}
+          onUpdateRrPresets={()=>{}}
+          initialData={editing}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+function AdminPanel() {
+  const [stats,setStats]   = useState(null);
+  const [users,setUsers]   = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [search,setSearch] = useState("");
+  const [toggling,setToggling] = useState(null);
+  const [confirm,setConfirm] = useState(null); // {uid, name, banned}
+
+  useEffect(()=>{
+    (async()=>{
+      const [s,u] = await Promise.all([fbGetStats(), fbGetAllUsers()]);
+      setStats(s);
+      setUsers(u.sort((a,b)=>(a.registeredAt||"").localeCompare(b.registeredAt||"")));
+      setLoading(false);
+    })();
+  },[]);
+
+  const handleToggleBan = async (uid, currentBanned) => {
+    setToggling(uid);
+    await fbSetUserBanned(uid, !currentBanned);
+    setUsers(prev => prev.map(u => u.uid===uid ? {...u, banned:!currentBanned} : u));
+    setToggling(null);
+    setConfirm(null);
+  };
+
+  const filtered = users.filter(u=>
+    (u.name||"").toLowerCase().includes(search.toLowerCase()) ||
+    (u.email||"").toLowerCase().includes(search.toLowerCase())
+  );
+
+  if(loading) return <div className="content" style={{textAlign:"center",paddingTop:60,color:"#4A4E5A"}}>Cargando panel admin…</div>;
+
+  const activeUsers = users.filter(u=>!u.banned).length;
+  const userCount = stats?.userCount || users.length;
+  const pct = ((activeUsers/MAX_USERS)*100).toFixed(1);
+
+  return (
+    <div className="content">
+      {/* Confirm modal */}
+      {confirm && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",display:"flex",alignItems:"center",
+          justifyContent:"center",zIndex:9999,padding:20}}>
+          <div style={{background:"#13151D",border:"1px solid #2A2C34",borderRadius:16,padding:28,maxWidth:340,width:"100%"}}>
+            <div style={{fontSize:20,marginBottom:12}}>{confirm.banned?"🔓":"🚫"}</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#E2E4EA",marginBottom:8}}>
+              {confirm.banned ? "¿Restaurar acceso?" : "¿Revocar acceso?"}
+            </div>
+            <div style={{fontSize:13,color:"#6A6E7A",marginBottom:20}}>
+              {confirm.banned
+                ? `${confirm.name} podrá volver a ingresar al Journal.`
+                : `${confirm.name} será desconectado inmediatamente y no podrá iniciar sesión.`}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setConfirm(null)}>Cancelar</button>
+              <button className="btn" style={{flex:1,
+                background:confirm.banned?"#00C076":"#FF3B30",color:"#fff",
+                border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontWeight:700}}
+                onClick={()=>handleToggleBan(confirm.uid, confirm.banned)}
+                disabled={toggling===confirm.uid}>
+                {toggling===confirm.uid ? "…" : confirm.banned ? "Restaurar" : "Revocar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <div style={{fontSize:24}}>🛡️</div>
+        <div>
+          <div style={{fontSize:16,fontWeight:800,color:"#E2E4EA"}}>Panel de Administrador</div>
+          <div style={{fontSize:12,color:"#4A4E5A"}}>Solo visible para administradores SMO</div>
+        </div>
+      </div>
+
+      {/* Stats cards */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+        {[
+          {l:"Accesos Activos",   v:activeUsers,              c:"#00C076", icon:"👥"},
+          {l:"Cupos Disponibles", v:MAX_USERS-activeUsers,    c:"#64D2FF", icon:"🎟️"},
+          {l:"Capacidad Usada",   v:pct+"%",                  c:"#FFD60A", icon:"📊"},
+        ].map(m=>(
+          <div key={m.l} style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 16px"}}>
+            <div style={{fontSize:20,marginBottom:6}}>{m.icon}</div>
+            <div style={{fontSize:22,fontWeight:800,color:m.c,fontFamily:"DM Mono"}}>{m.v}</div>
+            <div style={{fontSize:10,color:"#4A4E5A",marginTop:4,fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>{m.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Progress bar */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:700,color:"#C0C4D0"}}>Accesos VIP activos</span>
+          <span style={{fontSize:12,fontFamily:"DM Mono",color:"#00C076"}}>{activeUsers} / {MAX_USERS}</span>
+        </div>
+        <div style={{background:"#1A1C24",borderRadius:20,height:8,overflow:"hidden"}}>
+          <div style={{height:"100%",borderRadius:20,width:pct+"%",
+            background: activeUsers>=MAX_USERS?"#FF3B30":activeUsers>140?"#FFD60A":"#00C076",
+            transition:"width .3s"}}/>
+        </div>
+      </div>
+
+      {/* User list */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,overflow:"hidden"}}>
+        <div style={{padding:"14px 18px",borderBottom:"1px solid #1A1C24",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#E2E4EA",flex:1}}>
+            Lista de Usuarios ({filtered.length})
+          </div>
+          <input
+            className="form-input"
+            placeholder="🔍 Buscar por nombre o email…"
+            value={search}
+            onChange={e=>setSearch(e.target.value)}
+            style={{width:220,padding:"7px 12px",fontSize:12}}
+          />
+        </div>
+        <div style={{maxHeight:450,overflowY:"auto"}}>
+          {filtered.length===0 && <div style={{padding:30,textAlign:"center",color:"#4A4E5A"}}>Sin resultados</div>}
+          {filtered.map((u,i)=>(
+            <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 18px",
+              borderBottom:"1px solid #1A1C24",
+              background: u.banned ? "rgba(255,59,48,.05)" : i%2===0?"transparent":"rgba(255,255,255,.01)",
+              opacity: u.banned ? 0.7 : 1}}>
+              <div style={{width:32,height:32,borderRadius:10,
+                background: u.banned ? "#2A1A1A" : "#1A1C24",display:"flex",
+                alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,
+                color: u.banned ? "#FF3B30" : "#00C076",flexShrink:0}}>
+                {u.banned ? "🚫" : (u.name||"?")[0].toUpperCase()}
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}>
+                <div style={{fontSize:13,fontWeight:600,
+                  color: u.banned ? "#8A4A4A" : "#E2E4EA",
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  {u.name||"Sin nombre"}
+                  {u.banned && <span style={{fontSize:10,color:"#FF3B30",marginLeft:6,fontWeight:700}}>ACCESO REVOCADO</span>}
+                </div>
+                <div style={{fontSize:11,color:"#4A4E5A",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.email||"—"}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
+                <div>
+                  <div style={{fontSize:11,color:"#4A4E5A"}}>{u.accounts?.length||0} cuentas</div>
+                  <div style={{fontSize:10,color:"#3A3E4A"}}>{u.registeredAt?u.registeredAt.slice(0,10):"—"}</div>
+                </div>
+                {!ADMIN_EMAILS.includes(u.email) && (
+                  <button
+                    onClick={()=>setConfirm({uid:u.uid, name:u.name||u.email, banned:!!u.banned})}
+                    disabled={toggling===u.uid}
+                    style={{
+                      background: u.banned ? "rgba(0,192,118,.1)" : "rgba(255,59,48,.1)",
+                      border: `1px solid ${u.banned?"#00C076":"#FF3B30"}`,
+                      borderRadius:8,padding:"5px 10px",cursor:"pointer",
+                      color: u.banned ? "#00C076" : "#FF3B30",
+                      fontSize:11,fontWeight:700,whiteSpace:"nowrap",transition:"all .2s"
+                    }}>
+                    {toggling===u.uid ? "…" : u.banned ? "🔓 Restaurar" : "🚫 Revocar"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1388,7 +1927,7 @@ function Statistics({trades,accounts}) {
             {k:"Avg Loss",            v:fmt$(st.avgLoss),      c:"#FF3B30"},
             {k:"Mejor Trade",         v:fmt$(st.bestTrade),    c:"#00C076"},
             {k:"Peor Trade",          v:fmt$(st.worstTrade),   c:"#FF3B30"},
-            {k:"Max Drawdown",        v:fmt$(st.maxDD),        c:"#FF9F0A"},
+            {k:"Max Drawdown",        v:`${st.maxDDPct.toFixed(2)}%`,        c:"#FF9F0A"},
             {k:"Avg R:R ganadores",   v:st.avgRR.toFixed(2)+"R"},
           ].map(m=>(
             <div key={m.k} className="stats-row-item">
@@ -1493,7 +2032,8 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.pnl||!f.asset||!f.side) return;
-    const data={...f,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0};
+    const setupVal = f.setup==="__CUSTOM__" ? "OTHER" : f.setup;
+    const data={...f,setup:setupVal,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0};
     if(isEdit) onSave({...data, id:initialData.id});
     else onSave(data);
     onClose();
@@ -1553,28 +2093,27 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
               <label className="form-label">Fecha</label>
               <input className="form-input" type="date" value={f.date} onChange={e=>s("date",e.target.value)}/>
             </div>
-            {/* ASSET FIELD */}
-            <div className="form-group">
-              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
-                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewAsset(v=>!v)}>
-                  {showNewAsset?"✕ Cancelar":"＋ Nuevo"}
-                </button>
-              </label>
-              {showNewAsset ? (
-                <div style={{display:"flex",gap:6}}>
-                  <input className="form-input" placeholder="Ej: ETH, SP500…" value={newAsset}
-                    onChange={e=>setNewAsset(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&handleAddAsset()}
-                    style={{flex:1,textTransform:"uppercase"}}/>
-                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddAsset}>Add</button>
-                </div>
-              ) : (
-                <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
-                  {allAssets.map(a=><option key={a}>{a}</option>)}
-                </select>
-              )}
-            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>Activo <span style={{color:"#FF3B30"}}>*</span></span>
+              <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewAsset(v=>!v)}>
+                {showNewAsset?"✕ Cancelar":"＋ Nuevo"}
+              </button>
+            </label>
+            {showNewAsset ? (
+              <div style={{display:"flex",gap:6}}>
+                <input className="form-input" placeholder="Ej: ETH, SP500…" value={newAsset}
+                  onChange={e=>setNewAsset(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&handleAddAsset()}
+                  style={{flex:1,textTransform:"uppercase"}}/>
+                <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddAsset}>Add</button>
+              </div>
+            ) : (
+              <select className="form-select" value={f.asset} onChange={e=>s("asset",e.target.value)}>
+                {allAssets.map(a=><option key={a}>{a}</option>)}
+              </select>
+            )}
           </div>
 
           {/* BUY / SELL */}
@@ -1593,43 +2132,25 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
 
           <div className="form-row">
             <div className="form-group"><label className="form-label">P&L ($) <span style={{color:"#FF3B30"}}>*</span></label><input className="form-input" type="number" placeholder="ej: 150 o -80" value={f.pnl} onChange={e=>s("pnl",e.target.value)} style={{borderColor:!f.pnl?"#3D1A1A":""}}/></div>
-            {/* R:R FIELD WITH PRESETS */}
+            {/* R:R FIELD SIMPLIFIED */}
             <div className="form-group">
-              <label className="form-label" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span>R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></span>
-                <button style={{background:"none",border:"none",color:"#00C076",fontSize:11,cursor:"pointer",padding:0,fontWeight:600}} onClick={()=>setShowNewRR(v=>!v)}>
-                  {showNewRR?"✕":"＋ Nuevo"}
-                </button>
-              </label>
-              {showNewRR ? (
-                <div style={{display:"flex",gap:6}}>
-                  <input className="form-input" placeholder="Ej: -2.5 o 3.5" type="number" step="0.1" value={newRR}
-                    onChange={e=>setNewRR(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&handleAddRR()}
-                    style={{flex:1}}/>
-                  <button className="btn btn-primary" style={{padding:"0 14px",fontSize:13}} onClick={handleAddRR}>Add</button>
-                </div>
-              ) : (
-                <>
-                  {/* Preset chips */}
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-                    {(rrPresets||DEFAULT_RR_PRESETS).map(r=>{
-                      const active = parseFloat(f.rr)===r;
-                      const pos=r>0; const neg=r<0;
-                      return (
-                        <button key={r} onClick={()=>s("rr",String(r))}
-                          style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${active?(neg?"#FF3B30":"#00C076"):"#252830"}`,
-                            background:active?(neg?"rgba(255,59,48,.15)":"rgba(0,192,118,.15)"):"#161820",
-                            color:active?(neg?"#FF3B30":"#00C076"):"#6A6E7A",
-                            fontSize:11.5,fontWeight:active?700:400,cursor:"pointer",transition:"all .12s",fontFamily:"DM Mono"}}>
-                          {r>0?"+":""}{r}R
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input className="form-input" type="number" step="0.1" placeholder="o escribe manualmente…" value={f.rr} onChange={e=>s("rr",e.target.value)}/>
-                </>
-              )}
+              <label className="form-label">R:R <span style={{color:"#4A4E5A",fontWeight:400,fontSize:10}}>opcional</span></label>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                {[{label:"1:1",val:"1"},{label:"1:2",val:"2"},{label:"2:1",val:"0.5"},{label:"-1R",val:"-1"}].map(r=>{
+                  const active = parseFloat(f.rr)===parseFloat(r.val);
+                  const isNeg = parseFloat(r.val)<0;
+                  return (
+                    <button key={r.val} onClick={()=>s("rr",r.val)}
+                      style={{flex:1,padding:"9px 4px",borderRadius:10,border:`1px solid ${active?(isNeg?"#FF3B30":"#00C076"):"#252830"}`,
+                        background:active?(isNeg?"rgba(255,59,48,.15)":"rgba(0,192,118,.15)"):"#161820",
+                        color:active?(isNeg?"#FF3B30":"#00C076"):"#6A6E7A",
+                        fontSize:12,fontWeight:active?700:500,cursor:"pointer",transition:"all .12s",fontFamily:"DM Mono"}}>
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input className="form-input" type="number" step="0.1" placeholder="o escribe: 1.5, 3, -2…" value={f.rr} onChange={e=>s("rr",e.target.value)}/>
             </div>
           </div>
 
@@ -1642,9 +2163,25 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
             </div>
             <div className="form-group">
               <label className="form-label">Setup</label>
-              <select className="form-select" value={f.setup} onChange={e=>s("setup",e.target.value)}>
-                {SETUPS.map(x=><option key={x}>{x}</option>)}
-              </select>
+              {(() => {
+                const isCustom = f.setup && !SETUPS.includes(f.setup) && f.setup !== "__CUSTOM__";
+                const showCustomInput = f.setup === "__CUSTOM__" || isCustom;
+                return <>
+                  <select className="form-select" value={showCustomInput ? "__CUSTOM__" : f.setup} onChange={e=>{
+                    if(e.target.value === "__CUSTOM__") s("setup","__CUSTOM__");
+                    else s("setup",e.target.value);
+                  }}>
+                    {SETUPS.map(x=><option key={x} value={x}>{x}</option>)}
+                    <option value="__CUSTOM__">✏️ Personalizado...</option>
+                  </select>
+                  {showCustomInput && (
+                    <input className="form-input" style={{marginTop:8}} placeholder="Escribe tu setup…"
+                      value={f.setup==="__CUSTOM__"?"":f.setup}
+                      onChange={e=>s("setup",e.target.value||"__CUSTOM__")}
+                      autoFocus/>
+                  )}
+                </>;
+              })()}
             </div>
           </div>
           <div className="form-group">
@@ -1847,6 +2384,12 @@ export default function App() {
           };
           await fbSaveUserData(firebaseUser.uid, data);
         }
+        // Check if banned
+        if(data && data.banned) {
+          await signOut(auth);
+          setAuthLoading(false);
+          return;
+        }
         // Ensure rrPresets exists for legacy users
         if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
         if(!data.customAssets) data.customAssets = [];
@@ -1908,6 +2451,12 @@ export default function App() {
     setUser(u=>({...u,accounts:[...u.accounts,a]}));
     setActAccts(p=>[...p,a.id]);
   },[]);
+  const editAccount = useCallback(updated => {
+    const next = user.accounts.map(a => a.id===updated.id ? updated : a);
+    setUser(u=>({...u,accounts:next}));
+    fbSaveUserData(auth.currentUser.uid, {accounts:next});
+  },[user]);
+
   const delAccount = useCallback(id => {
     setUser(u=>({...u,accounts:u.accounts.filter(a=>a.id!==id)}));
     setActAccts(p=>p.filter(x=>x!==id));
@@ -1949,12 +2498,14 @@ export default function App() {
     return user.accounts.find(a=>a.id===activeAccts[0]);
   },[user,activeAccts,scope]);
 
+  const isAdmin = ADMIN_EMAILS.includes(user?.email);
   const NAV=[
     {id:"dashboard",label:"Dashboard",    icon:"dash"},
     {id:"journal",  label:"Trade Log",    icon:"log"},
     {id:"calendar", label:"Calendario",   icon:"cal"},
     {id:"stats",    label:"Estadísticas", icon:"stats"},
     {id:"accounts", label:"Mis Cuentas",  icon:"accts"},
+    ...(isAdmin?[{id:"admin",label:"Admin",icon:"settings"}]:[]),
   ];
 
   if(authLoading) return <><style>{css}</style><div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0E1117",color:"#00C076",fontSize:16,fontWeight:600}}>Cargando SVF Journal…</div></>;
@@ -2046,6 +2597,18 @@ export default function App() {
               }}>
                 <Ico n="plus" s={13} c="#fff"/><span> Añadir Trade</span>
               </button>
+              <button onClick={logout} title="Cerrar sesión" style={{
+                background:"none",border:"1px solid #2A2C34",borderRadius:8,
+                color:"#4A4E5A",cursor:"pointer",padding:"7px 10px",display:"flex",
+                alignItems:"center",gap:5,fontSize:12,fontWeight:600,transition:"all .2s"
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="#FF3B30";e.currentTarget.style.color="#FF3B30";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor="#2A2C34";e.currentTarget.style.color="#4A4E5A";}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+                <span>Salir</span>
+              </button>
             </div>
           </div>
 
@@ -2096,9 +2659,10 @@ export default function App() {
 
           {tab==="dashboard" && <Dashboard trades={visibleTrades} accounts={visibleAccounts} scope={scope}/>}
           {tab==="journal"   && <TradeLog  trades={visibleTrades} accounts={user.accounts} onAdd={()=>setShowAdd(true)} onDelete={delTrade} onEdit={editTrade}/>}
-          {tab==="calendar"  && <CalendarView trades={visibleTrades}/>}
+          {tab==="calendar"  && <CalendarView trades={visibleTrades} accounts={user.accounts} onDelete={delTrade} onEdit={editTrade}/>}
           {tab==="stats"     && <Statistics   trades={visibleTrades} accounts={visibleAccounts}/>}
-          {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount}/>}
+          {tab==="accounts"  && <AccountsPage user={user} trades={trades} onAddAccount={addAccount} onDeleteAccount={delAccount} onEditAccount={editAccount}/>}
+          {tab==="admin"     && isAdmin && <AdminPanel/>}
         </main>
       </div>
 
