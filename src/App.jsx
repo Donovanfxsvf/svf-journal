@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -399,6 +399,12 @@ tbody td{padding:11px 14px;color:#A0A4B0;white-space:nowrap;}
 .cal-num{font-size:11px;font-weight:700;color:#4A4E5A;margin-bottom:3px;}
 .cal-pnl{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
 .cal-trades{font-size:10px;color:#4A4E5A;margin-top:1px;}
+.cal-week-summary{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:12px;
+  padding:5px 10px;background:#0A0C10;border-radius:7px;margin:2px 0 6px;border:1px solid #141620;}
+.cal-week-label{font-size:10px;font-weight:700;color:#3A3E4A;letter-spacing:.5px;text-transform:uppercase;margin-right:auto;}
+.cal-week-val{font-size:12px;font-weight:800;font-family:'DM Mono',monospace;}
+.cal-week-pct{font-size:10.5px;font-weight:600;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:5px;}
+.theme-light .cal-week-summary{background:#F5F6FA;border-color:#DDE0E8;}
 
 /* STATS */
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
@@ -836,14 +842,21 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
   const [delPass,setDelPass]=useState("");
   const [delErr,setDelErr]=useState("");
   const [delLoading,setDelLoading]=useState(false);
+  const [showDemoRemoval,setShowDemoRemoval]=useState(false);
   const [form,setForm]=useState({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
+  const MAX_ACCOUNTS = 10;
+
   const handleAdd=()=>{
     if(!form.name||!form.balance) return;
+    const realAccounts = user.accounts.filter(a=>!a.isDemo);
+    if(realAccounts.length >= MAX_ACCOUNTS) return;
+    const hadOnlyDemo = !user.accounts.some(a=>!a.isDemo);
     onAddAccount({...form,balance:parseFloat(form.balance),id:"a"+Date.now(),active:true});
     setShowAdd(false);
     setForm({name:"",type:"real",broker:"",balance:"",currency:"USD"});
+    if(hadOnlyDemo && user.accounts.some(a=>a.isDemo)) setShowDemoRemoval(true);
   };
 
   const openEdit=(a)=>{
@@ -883,9 +896,9 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
       <div style={{display:"flex",alignItems:"center",marginBottom:20,gap:12}}>
         <div style={{flex:1}}>
           <div style={{fontSize:15,fontWeight:700}}>Mis Cuentas</div>
-          <div style={{fontSize:12,color:"#4A4E5A",marginTop:2}}>{user.accounts.length} cuenta{user.accounts.length!==1?"s":""} registrada{user.accounts.length!==1?"s":""}</div>
+          <div style={{fontSize:12,color:"#4A4E5A",marginTop:2}}>{user.accounts.filter(a=>!a.isDemo).length} de {MAX_ACCOUNTS} cuentas · {user.accounts.length} total{user.accounts.some(a=>a.isDemo)?" (incl. demo)":""}</div>
         </div>
-        <button className="btn btn-primary" onClick={()=>setShowAdd(true)}>
+        <button className="btn btn-primary" onClick={()=>setShowAdd(true)} disabled={user.accounts.filter(a=>!a.isDemo).length>=MAX_ACCOUNTS}>
           <Ico n="plus" s={14} c="#fff"/> Nueva Cuenta
         </button>
       </div>
@@ -1042,6 +1055,7 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-head">
               <h3>➕ Nueva Cuenta</h3>
+              <span style={{fontSize:11,color:"#4A4E5A",fontWeight:600}}>{MAX_ACCOUNTS - user.accounts.filter(a=>!a.isDemo).length} disponibles</span>
               <button className="modal-close" onClick={()=>setShowAdd(false)}>×</button>
             </div>
             <div className="modal-body">
@@ -1084,6 +1098,33 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
             <div className="modal-foot">
               <button className="btn btn-ghost" onClick={()=>setShowAdd(false)}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleAdd}>Crear Cuenta</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Demo removal prompt */}
+      {showDemoRemoval && (
+        <div className="modal-overlay" onClick={()=>setShowDemoRemoval(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+            <div className="modal-head">
+              <h3>🧪 Eliminar Cuenta Demo</h3>
+              <button className="modal-close" onClick={()=>setShowDemoRemoval(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{textAlign:"center",fontSize:40,marginBottom:8}}>🎉</div>
+              <div style={{fontSize:14,fontWeight:600,textAlign:"center",color:"#E2E4EA",marginBottom:8}}>¡Tu primera cuenta real fue creada!</div>
+              <div style={{fontSize:13,color:"#6A6E7A",textAlign:"center",lineHeight:1.6}}>
+                La cuenta de demostración ya no es necesaria. ¿Deseas eliminarla junto con sus trades de ejemplo?
+              </div>
+            </div>
+            <div className="modal-foot" style={{justifyContent:"center",gap:12}}>
+              <button className="btn btn-ghost" onClick={()=>setShowDemoRemoval(false)}>Mantener Demo</button>
+              <button className="btn btn-danger" onClick={()=>{
+                const demoAcct = user.accounts.find(a=>a.isDemo);
+                if(demoAcct) onDeleteAccount(demoAcct.id);
+                setShowDemoRemoval(false);
+              }}>Eliminar Demo</button>
             </div>
           </div>
         </div>
@@ -1474,8 +1515,8 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
   const [selected,setSel]=useState(null);
   const [editing,setEditing]=useState(null);
   const getAcct=id=>(accounts||[]).find(a=>a.id===id);
-  const [year,setY]=useState(2026);
-  const [month,setM]=useState(0);
+  const [year,setY]=useState(()=>new Date().getFullYear());
+  const [month,setM]=useState(()=>new Date().getMonth());
   const today=new Date();
   const todayStr=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
 
@@ -1495,6 +1536,29 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
   const prev=()=>month===0?[setM(11),setY(y=>y-1)]:setM(m=>m-1);
   const next=()=>month===11?[setM(0),setY(y=>y+1)]:setM(m=>m+1);
 
+  const startBalance = accounts.reduce((s,a)=>s+a.balance,0);
+
+  // Group cells into weeks and compute weekly P&L
+  const weeks = useMemo(()=>{
+    const w=[];
+    for(let i=0;i<cells.length;i+=7){
+      const weekCells=cells.slice(i,Math.min(i+7,cells.length));
+      // pad last week to 7 if needed
+      while(weekCells.length<7) weekCells.push(null);
+      let weekPnl=0, weekCount=0;
+      weekCells.forEach(day=>{
+        if(!day) return;
+        const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+        const d=daily[key];
+        if(d){weekPnl+=d.pnl;weekCount+=d.count;}
+      });
+      w.push({cells:weekCells,pnl:weekPnl,count:weekCount});
+    }
+    return w;
+  },[cells,daily,year,month]);
+
+  const goToday=()=>{const n=new Date();setY(n.getFullYear());setM(n.getMonth());};
+
   return (
     <div className="content">
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,flexWrap:"wrap"}}>
@@ -1502,6 +1566,7 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
           <button className="btn btn-ghost btn-sm" onClick={prev}><Ico n="chevL" s={14}/></button>
           <span style={{fontSize:18,fontWeight:800,minWidth:170,textAlign:"center"}}>{MNAMES[month]} {year}</span>
           <button className="btn btn-ghost btn-sm" onClick={next}><Ico n="chevR" s={14}/></button>
+          <button className="btn btn-ghost btn-sm" onClick={goToday} style={{marginLeft:4,fontSize:11,color:"#00C076",borderColor:"rgba(0,192,118,.3)"}}>Hoy</button>
         </div>
         <div style={{display:"flex",gap:10,marginLeft:"auto",flexWrap:"wrap"}}>
           {[
@@ -1519,18 +1584,31 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
       <div className="chart-card">
         <div className="cal-header-row">{DOWS.map(d=><div key={d} className="cal-dow">{d}</div>)}</div>
         <div className="cal-grid">
-          {cells.map((day,i)=>{
-            if(!day) return <div key={i} className="cal-day empty"/>;
-            const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-            const d=daily[key];
-            let cls="cal-day"+(d?(d.pnl>=0?" win-day":" loss-day"):"")+( key===todayStr?" today":"");
-            return (
-              <div key={i} className={cls}>
-                <div className="cal-num">{day}</div>
-                {d&&<><div className="cal-pnl" style={{color:pnlColor(d.pnl)}}>{fmt$(d.pnl,0)}</div><div className="cal-trades">{d.count} trade{d.count>1?"s":""}</div></>}
-              </div>
-            );
-          })}
+          {weeks.map((wk,wi)=>(
+            <React.Fragment key={wi}>
+              {wk.cells.map((day,di)=>{
+                const ci=wi*7+di;
+                if(!day) return <div key={ci} className="cal-day empty"/>;
+                const key=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+                const d=daily[key];
+                let cls="cal-day"+(d?(d.pnl>=0?" win-day":" loss-day"):"")+( key===todayStr?" today":"");
+                return (
+                  <div key={ci} className={cls}>
+                    <div className="cal-num">{day}</div>
+                    {d&&<><div className="cal-pnl" style={{color:pnlColor(d.pnl)}}>{fmt$(d.pnl,0)}</div><div className="cal-trades">{d.count} trade{d.count>1?"s":""}</div></>}
+                  </div>
+                );
+              })}
+              {wk.count>0 && (
+                <div className="cal-week-summary">
+                  <span className="cal-week-label">Sem {wi+1}</span>
+                  <span className="cal-week-val" style={{color:pnlColor(wk.pnl)}}>{wk.pnl>=0?"+":""}{fmt$(wk.pnl,0)}</span>
+                  {startBalance>0 && <span className="cal-week-pct" style={{color:pnlColor(wk.pnl),background:pnlBg(wk.pnl)}}>{wk.pnl>=0?"+":""}{((wk.pnl/startBalance)*100).toFixed(2)}%</span>}
+                  <span style={{fontSize:10,color:"#4A4E5A"}}>{wk.count} op</span>
+                </div>
+              )}
+            </React.Fragment>
+          ))}
         </div>
       </div>
       {monTrades.length>0&&(
@@ -1954,7 +2032,8 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.pnl||!f.asset||!f.side) return;
-    const data={...f,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0};
+    const setupVal = f.setup==="__CUSTOM__" ? "OTHER" : f.setup;
+    const data={...f,setup:setupVal,entry:parseFloat(f.entry),exit:parseFloat(f.exit),qty:parseFloat(f.qty)||1,pnl:parseFloat(f.pnl),rr:parseFloat(f.rr)||0};
     if(isEdit) onSave({...data, id:initialData.id});
     else onSave(data);
     onClose();
@@ -2084,9 +2163,25 @@ function AddTradeModal({accounts,defaultAcct,onClose,onSave,customAssets,rrPrese
             </div>
             <div className="form-group">
               <label className="form-label">Setup</label>
-              <select className="form-select" value={f.setup} onChange={e=>s("setup",e.target.value)}>
-                {SETUPS.map(x=><option key={x}>{x}</option>)}
-              </select>
+              {(() => {
+                const isCustom = f.setup && !SETUPS.includes(f.setup) && f.setup !== "__CUSTOM__";
+                const showCustomInput = f.setup === "__CUSTOM__" || isCustom;
+                return <>
+                  <select className="form-select" value={showCustomInput ? "__CUSTOM__" : f.setup} onChange={e=>{
+                    if(e.target.value === "__CUSTOM__") s("setup","__CUSTOM__");
+                    else s("setup",e.target.value);
+                  }}>
+                    {SETUPS.map(x=><option key={x} value={x}>{x}</option>)}
+                    <option value="__CUSTOM__">✏️ Personalizado...</option>
+                  </select>
+                  {showCustomInput && (
+                    <input className="form-input" style={{marginTop:8}} placeholder="Escribe tu setup…"
+                      value={f.setup==="__CUSTOM__"?"":f.setup}
+                      onChange={e=>s("setup",e.target.value||"__CUSTOM__")}
+                      autoFocus/>
+                  )}
+                </>;
+              })()}
             </div>
           </div>
           <div className="form-group">
