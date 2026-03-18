@@ -853,6 +853,7 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
   const [delErr,setDelErr]=useState("");
   const [delLoading,setDelLoading]=useState(false);
   const [showDemoRemoval,setShowDemoRemoval]=useState(false);
+  const [delDemo,setDelDemo]=useState(null);
   const [form,setForm]=useState({name:"",type:"real",broker:"",balance:"",currency:"USD"});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -931,14 +932,20 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
           const st=calcStats(acctTrades);
           return (
             <div key={a.id} className="acct-manage-card" style={a.isDemo?{border:"1px solid rgba(142,142,154,.2)",opacity:.85}:{}}>
-              {a.isDemo && <div style={{fontSize:10,fontWeight:700,color:"#8E8E9A",letterSpacing:1,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:5}}><span>🧪</span> Cuenta Demostración — solo lectura</div>}
+              {a.isDemo && <div style={{fontSize:10,fontWeight:700,color:"#8E8E9A",letterSpacing:1,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:5}}><span>🧪</span> Cuenta Demostración</div>}
               <div className="acct-top">
                 <div className="acct-emoji" style={{background:t.color+"22"}}>{t.icon}</div>
                 <div style={{flex:1}}>
                   <div className="acct-card-name">{a.name}</div>
                   <div className="acct-card-type" style={{color:t.color}}>{t.label} · {a.broker||"—"}</div>
                 </div>
-                {!a.isDemo && (
+                {a.isDemo ? (
+                  <div style={{display:"flex",gap:6}}>
+                    <button className="btn btn-danger btn-sm" onClick={()=>setDelDemo(a)} title="Eliminar demo">
+                      <Ico n="trash" s={12} c="#FF3B30"/> Eliminar
+                    </button>
+                  </div>
+                ) : (
                   <div style={{display:"flex",gap:6}}>
                     <button className="btn btn-ghost btn-sm" onClick={()=>openEdit(a)} title="Editar cuenta"
                       style={{border:"1px solid #2A2C34",padding:"5px 8px"}}>
@@ -1113,7 +1120,7 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
         </div>
       )}
 
-      {/* Demo removal prompt */}
+      {/* Demo removal prompt — on first real account */}
       {showDemoRemoval && (
         <div className="modal-overlay" onClick={()=>setShowDemoRemoval(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
@@ -1134,6 +1141,31 @@ function AccountsPage({user,trades,onAddAccount,onDeleteAccount,onEditAccount}) 
                 const demoAcct = user.accounts.find(a=>a.isDemo);
                 if(demoAcct) onDeleteAccount(demoAcct.id);
                 setShowDemoRemoval(false);
+              }}>Eliminar Demo</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Demo delete — manual from card (no password) */}
+      {delDemo && (
+        <div className="modal-overlay" onClick={()=>setDelDemo(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:400}}>
+            <div className="modal-head">
+              <h3>🗑️ Eliminar Cuenta Demo</h3>
+              <button className="modal-close" onClick={()=>setDelDemo(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:"rgba(142,142,154,.08)",border:"1px solid rgba(142,142,154,.2)",
+                borderRadius:10,padding:"12px 14px",fontSize:13,color:"#8E8E9A",lineHeight:1.6}}>
+                🧪 Vas a eliminar la cuenta <strong style={{color:"#E2E4EA"}}>"{delDemo.name}"</strong> y todos sus trades de ejemplo. Esta acción es irreversible.
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={()=>setDelDemo(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={()=>{
+                onDeleteAccount(delDemo.id);
+                setDelDemo(null);
               }}>Eliminar Demo</button>
             </div>
           </div>
