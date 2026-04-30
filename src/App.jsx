@@ -2509,6 +2509,7 @@ export default function App() {
   const [toasts,    setToasts]    = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [logoUrl, setLogoUrl] = useState("");
+  const [dataReady, setDataReady] = useState(false); // CRITICAL: prevents persistence during initial load
 
   // Firebase Auth state listener — auto-login / logout
   useEffect(()=>{
@@ -2549,7 +2550,11 @@ export default function App() {
         setUser(u);
         setTrades(u.trades||[]);
         setActAccts((u.accounts||[]).map(a=>a.id));
+        // CRITICAL: delay dataReady to ensure all state updates are processed
+        // This prevents the persistence useEffect from firing with stale/empty trades
+        setTimeout(()=>setDataReady(true), 1000);
       } else {
+        setDataReady(false);
         setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
       }
       setAuthLoading(false);
@@ -2569,10 +2574,11 @@ export default function App() {
   },[]);
 
   // Persistir trades y accounts en Firestore cuando cambian
+  // CRITICAL: dataReady prevents writing empty trades during initial load race condition
   useEffect(()=>{
-    if(!user||!auth.currentUser) return;
+    if(!user||!auth.currentUser||!dataReady) return;
     fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
-  },[trades, user]);
+  },[trades, user, dataReady]);
 
   const login = useCallback(() => {
     // handled by onAuthStateChanged
