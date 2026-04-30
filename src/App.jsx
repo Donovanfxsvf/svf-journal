@@ -48,6 +48,51 @@ async function fbSaveUserData(uid, data) {
   } catch(e) { console.error("fbSave:", e); }
 }
 
+// ─── BACKUP SYSTEM ────────────────────────────────────────────────────────────
+const MAX_BACKUPS = 5;
+
+async function fbSaveBackup(uid, trades, accounts) {
+  try {
+    // Only backup if there's actual data to backup
+    if(!trades || trades.length === 0) return;
+    const ts = new Date().toISOString();
+    const backupId = "bk_" + Date.now();
+    await setDoc(doc(db, "users", uid, "backups", backupId), {
+      trades,
+      accounts,
+      createdAt: ts,
+      tradeCount: trades.length,
+      accountCount: accounts.length,
+    });
+    // Clean old backups — keep only last MAX_BACKUPS
+    const snaps = await getDocs(collection(db, "users", uid, "backups"));
+    const allBackups = snaps.docs.map(d=>({id:d.id, createdAt:d.data().createdAt||""})).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    if(allBackups.length > MAX_BACKUPS) {
+      const toDelete = allBackups.slice(MAX_BACKUPS);
+      for(const bk of toDelete) {
+        await deleteDoc(doc(db, "users", uid, "backups", bk.id));
+      }
+    }
+  } catch(e) { console.error("backup:", e); }
+}
+
+async function fbGetBackups(uid) {
+  try {
+    const snaps = await getDocs(collection(db, "users", uid, "backups"));
+    return snaps.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  } catch { return []; }
+}
+
+async function fbRestoreBackup(uid, backupId) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid, "backups", backupId));
+    if(!snap.exists()) return null;
+    const data = snap.data();
+    await setDoc(doc(db, "users", uid), { trades: data.trades, accounts: data.accounts }, { merge: true });
+    return data;
+  } catch(e) { console.error("restore:", e); return null; }
+}
+
 // ─── ADMIN HELPERS ────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = "donovanjms@gmail.com";
 const ADMIN_EMAILS = ["donovanjms@gmail.com", "crmacademyus@gmail.com"];
@@ -1847,6 +1892,13 @@ function AdminPanel() {
   const [search,setSearch] = useState("");
   const [toggling,setToggling] = useState(null);
   const [confirm,setConfirm] = useState(null); // {uid, name, banned}
+  // Backup restore
+  const [backupEmail,setBackupEmail] = useState("");
+  const [backups,setBackups] = useState([]);
+  const [backupLoading,setBackupLoading] = useState(false);
+  const [backupUser,setBackupUser] = useState(null);
+  const [restoring,setRestoring] = useState(null);
+  const [restoreResult,setRestoreResult] = useState(null);
 
   useEffect(()=>{
     (async()=>{
@@ -1863,6 +1915,32 @@ function AdminPanel() {
     setUsers(prev => prev.map(u => u.uid===uid ? {...u, banned:!currentBanned} : u));
     setToggling(null);
     setConfirm(null);
+  };
+
+  const searchBackups = async () => {
+    const email = backupEmail.trim().toLowerCase();
+    if(!email) return;
+    setBackupLoading(true);
+    setBackups([]); setBackupUser(null); setRestoreResult(null);
+    const found = users.find(u=>(u.email||"").toLowerCase()===email);
+    if(!found) { setBackupLoading(false); setRestoreResult({ok:false,msg:"Usuario no encontrado: "+email}); return; }
+    setBackupUser(found);
+    const bks = await fbGetBackups(found.uid);
+    setBackups(bks);
+    setBackupLoading(false);
+    if(bks.length===0) setRestoreResult({ok:false,msg:"No hay backups para este usuario."});
+  };
+
+  const handleRestore = async (backupId) => {
+    if(!backupUser) return;
+    setRestoring(backupId);
+    const data = await fbRestoreBackup(backupUser.uid, backupId);
+    setRestoring(null);
+    if(data) {
+      setRestoreResult({ok:true,msg:`✅ Restaurado: ${data.tradeCount} trades y ${data.accountCount} cuentas. El usuario verá sus datos al recargar.`});
+    } else {
+      setRestoreResult({ok:false,msg:"Error al restaurar."});
+    }
   };
 
   const filtered = users.filter(u=>
@@ -1955,6 +2033,62 @@ function AdminPanel() {
         <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
           <LogoUploader/>
         </div>
+      </div>
+
+      {/* Backup & Restore */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+          <div style={{fontSize:18}}>💾</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:"#E2E4EA"}}>Backup & Restauración de Datos</div>
+            <div style={{fontSize:11,color:"#4A4E5A"}}>Busca un usuario por email para ver y restaurar sus backups automáticos</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <input className="form-input" placeholder="Email del usuario…" value={backupEmail}
+            onChange={e=>setBackupEmail(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&searchBackups()}
+            style={{flex:1,minWidth:200,padding:"9px 14px",fontSize:13}}/>
+          <button className="btn btn-primary btn-sm" onClick={searchBackups} disabled={backupLoading}>
+            {backupLoading?"Buscando…":"🔍 Buscar Backups"}
+          </button>
+        </div>
+        {restoreResult && (
+          <div style={{marginTop:10,padding:"10px 14px",borderRadius:8,fontSize:13,
+            background:restoreResult.ok?"rgba(0,192,118,.1)":"rgba(255,59,48,.1)",
+            color:restoreResult.ok?"#00C076":"#FF3B30",
+            border:`1px solid ${restoreResult.ok?"rgba(0,192,118,.25)":"rgba(255,59,48,.25)"}`}}>
+            {restoreResult.msg}
+          </div>
+        )}
+        {backupUser && backups.length > 0 && (
+          <div style={{marginTop:12}}>
+            <div style={{fontSize:12,color:"#6A6E7A",marginBottom:8}}>
+              Backups de <strong style={{color:"#E2E4EA"}}>{backupUser.name}</strong> ({backupUser.email}):
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {backups.map(bk=>(
+                <div key={bk.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",
+                  background:"#0A0C10",border:"1px solid #1A1C24",borderRadius:9}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#A0A4B0"}}>
+                      📅 {bk.createdAt ? new Date(bk.createdAt).toLocaleString("es-DO") : "—"}
+                    </div>
+                    <div style={{fontSize:11,color:"#4A4E5A",marginTop:2}}>
+                      {bk.tradeCount||0} trades · {bk.accountCount||0} cuentas
+                    </div>
+                  </div>
+                  <button className="btn btn-sm" onClick={()=>handleRestore(bk.id)}
+                    disabled={restoring===bk.id}
+                    style={{background:"rgba(0,192,118,.15)",color:"#00C076",border:"1px solid rgba(0,192,118,.3)",
+                      fontWeight:700,cursor:"pointer"}}>
+                    {restoring===bk.id ? "Restaurando…" : "♻️ Restaurar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* User list */}
@@ -2575,10 +2709,26 @@ export default function App() {
 
   // Persistir trades y accounts en Firestore cuando cambian
   // CRITICAL: dataReady prevents writing empty trades during initial load race condition
+  const lastBackupRef = React.useRef(0);
   useEffect(()=>{
     if(!user||!auth.currentUser||!dataReady) return;
     fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
+    // Auto-backup every 5 minutes max (not on every save)
+    const now = Date.now();
+    if(now - lastBackupRef.current > 5*60*1000 && trades.length > 0) {
+      lastBackupRef.current = now;
+      fbSaveBackup(auth.currentUser.uid, trades, user.accounts);
+    }
   },[trades, user, dataReady]);
+
+  // Save a backup immediately when data first loads (snapshot of what user had)
+  useEffect(()=>{
+    if(!dataReady || !user || !auth.currentUser) return;
+    if(trades.length > 0) {
+      lastBackupRef.current = Date.now();
+      fbSaveBackup(auth.currentUser.uid, trades, user.accounts);
+    }
+  },[dataReady]); // only runs once when dataReady flips to true
 
   const login = useCallback(() => {
     // handled by onAuthStateChanged
