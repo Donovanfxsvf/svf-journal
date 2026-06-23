@@ -79,6 +79,48 @@ async function fbGetAllUsers() {
   } catch { return []; }
 }
 
+// ─── BACKUP SYSTEM ────────────────────────────────────────────────────────────
+const MAX_BACKUPS = 10;
+
+async function fbSaveBackup(uid, trades, accounts) {
+  try {
+    if(!trades || trades.length === 0) return;
+    const ts = new Date().toISOString();
+    const backupId = "bk_" + Date.now();
+    await setDoc(doc(db, "users", uid, "backups", backupId), {
+      trades, accounts, createdAt: ts,
+      tradeCount: trades.length, accountCount: accounts.length,
+    });
+    // Keep only last MAX_BACKUPS
+    const snaps = await getDocs(collection(db, "users", uid, "backups"));
+    const all = snaps.docs.map(d=>({id:d.id,createdAt:d.data().createdAt||""}))
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    if(all.length > MAX_BACKUPS) {
+      for(const bk of all.slice(MAX_BACKUPS)) {
+        await deleteDoc(doc(db, "users", uid, "backups", bk.id));
+      }
+    }
+  } catch(e) { console.error("backup:", e); }
+}
+
+async function fbGetBackups(uid) {
+  try {
+    const snaps = await getDocs(collection(db, "users", uid, "backups"));
+    return snaps.docs.map(d=>({id:d.id,...d.data()}))
+      .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  } catch { return []; }
+}
+
+async function fbRestoreBackup(uid, backupId) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid, "backups", backupId));
+    if(!snap.exists()) return null;
+    const data = snap.data();
+    await setDoc(doc(db, "users", uid), { trades: data.trades, accounts: data.accounts }, { merge: true });
+    return data;
+  } catch(e) { console.error("restore:", e); return null; }
+}
+
 async function fbSetUserBanned(uid, banned) {
   try {
     await updateDoc(doc(db, "users", uid), { banned });
@@ -2495,6 +2537,7 @@ export default function App() {
   const [user,      setUser]      = useState(null);
   const [trades,    setTrades]    = useState([]);
   const tradesModified = useRef(false); // only true after user action, prevents saving [] on load
+  const lastBackupRef = useRef(0);
   const [tab,       setTab]       = useState("dashboard");
   const [scope,     setScope]     = useState("global");
   const [activeAccts,setActAccts] = useState([]);
@@ -2511,13 +2554,15 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if(firebaseUser){
         let data = await fbGetUserData(firebaseUser.uid);
-        // Seed demo data for ALL new users (no existing data)
-        if(!data || (!data.accounts || data.accounts.length===0)){
+        // Seed demo data ONLY for brand new users (document does not exist at all)
+        // NEVER overwrite existing users even if accounts/trades are empty
+        if(!data){
           data = {
-            name: (data&&data.name) || firebaseUser.displayName || firebaseUser.email.split("@")[0],
+            name: firebaseUser.displayName || firebaseUser.email.split("@")[0],
             email: firebaseUser.email,
             customAssets: [],
             rrPresets: [...DEFAULT_RR_PRESETS],
+            registeredAt: new Date().toISOString(),
             ...DEMO_SEED_DATA,
           };
           await fbSaveUserData(firebaseUser.uid, data);
@@ -2549,7 +2594,23 @@ export default function App() {
     if(!user||!auth.currentUser) return;
     if(!tradesModified.current) return; // no guardar en carga inicial
     fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
+    // Auto-backup cada 5 minutos si hay trades
+    const now = Date.now();
+    if(trades.length > 0 && now - lastBackupRef.current > 5*60*1000) {
+      lastBackupRef.current = now;
+      fbSaveBackup(auth.currentUser.uid, trades, user.accounts);
+    }
   },[trades, user]);
+
+  // Backup inmediato al cargar datos por primera vez
+  useEffect(()=>{
+    if(!user||!auth.currentUser) return;
+    const trades_loaded = user.trades || [];
+    if(trades_loaded.length > 0 && lastBackupRef.current === 0) {
+      lastBackupRef.current = Date.now();
+      fbSaveBackup(auth.currentUser.uid, trades_loaded, user.accounts || []);
+    }
+  },[user?.id]);
 
   const login = useCallback(() => {
     // handled by onAuthStateChanged
