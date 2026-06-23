@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell, AreaChart, Area
@@ -2494,7 +2494,7 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
 export default function App() {
   const [user,      setUser]      = useState(null);
   const [trades,    setTrades]    = useState([]);
-  const tradesModified = React.useRef(false); // only true after user action, prevents saving [] on load
+  const tradesModified = useRef(false); // only true after user action, prevents saving [] on load
   const [tab,       setTab]       = useState("dashboard");
   const [scope,     setScope]     = useState("global");
   const [activeAccts,setActAccts] = useState([]);
