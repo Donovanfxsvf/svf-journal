@@ -2494,6 +2494,7 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
 export default function App() {
   const [user,      setUser]      = useState(null);
   const [trades,    setTrades]    = useState([]);
+  const tradesModified = React.useRef(false); // only true after user action, prevents saving [] on load
   const [tab,       setTab]       = useState("dashboard");
   const [scope,     setScope]     = useState("global");
   const [activeAccts,setActAccts] = useState([]);
@@ -2542,9 +2543,11 @@ export default function App() {
     return ()=>unsub();
   },[]);
 
-  // Persistir trades y accounts en Firestore cuando cambian
+  // Persistir trades y accounts en Firestore — SOLO cuando el usuario hace una acción real
+  // Esto previene que trades:[] sobrescriba los datos al cargar la app
   useEffect(()=>{
     if(!user||!auth.currentUser) return;
+    if(!tradesModified.current) return; // no guardar en carga inicial
     fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
   },[trades, user]);
 
@@ -2553,6 +2556,7 @@ export default function App() {
   },[]);
 
   const logout = async () => {
+    tradesModified.current = false;
     await signOut(auth);
   };
 
@@ -2581,20 +2585,23 @@ export default function App() {
     );
   },[]);
 
-  const addTrade = useCallback(t => setTrades(p=>[...p,{...t,id:Date.now()}]),[]);
-  const editTrade = useCallback(t => setTrades(p=>p.map(x=>x.id===t.id?t:x)),[]);
-  const delTrade = useCallback(id => setTrades(p=>p.filter(t=>t.id!==id)),[]);
+  const addTrade = useCallback(t => { tradesModified.current=true; setTrades(p=>[...p,{...t,id:Date.now()}]); },[]);
+  const editTrade = useCallback(t => { tradesModified.current=true; setTrades(p=>p.map(x=>x.id===t.id?t:x)); },[]);
+  const delTrade = useCallback(id => { tradesModified.current=true; setTrades(p=>p.filter(t=>t.id!==id)); },[]);
   const addAccount = useCallback(a => {
+    tradesModified.current=true;
     setUser(u=>({...u,accounts:[...u.accounts,a]}));
     setActAccts(p=>[...p,a.id]);
   },[]);
   const editAccount = useCallback(updated => {
+    tradesModified.current=true;
     const next = user.accounts.map(a => a.id===updated.id ? updated : a);
     setUser(u=>({...u,accounts:next}));
     fbSaveUserData(auth.currentUser.uid, {accounts:next});
   },[user]);
 
   const delAccount = useCallback(id => {
+    tradesModified.current=true;
     setUser(u=>({...u,accounts:u.accounts.filter(a=>a.id!==id)}));
     setActAccts(p=>p.filter(x=>x!==id));
     setTrades(p=>p.filter(t=>t.accountId!==id));
