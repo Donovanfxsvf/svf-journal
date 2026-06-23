@@ -15,7 +15,7 @@ import {
   deleteUser as firebaseDeleteUser,
 } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, runTransaction, increment
+  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, runTransaction, increment, onSnapshot
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
