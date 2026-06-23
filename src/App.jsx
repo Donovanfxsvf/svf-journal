@@ -1652,6 +1652,13 @@ function AdminPanel() {
   const [limitInput,setLimitInput] = useState("");
   const [savingLimit,setSavingLimit] = useState(false);
   const [limitSaved,setLimitSaved] = useState(false);
+  // Backup restore
+  const [backupEmail,setBackupEmail] = useState("");
+  const [backups,setBackups] = useState([]);
+  const [backupLoading,setBackupLoading] = useState(false);
+  const [backupUser,setBackupUser] = useState(null);
+  const [restoring,setRestoring] = useState(null);
+  const [restoreResult,setRestoreResult] = useState(null);
 
   useEffect(()=>{
     (async()=>{
@@ -1672,6 +1679,32 @@ function AdminPanel() {
     setSavingLimit(false);
     setLimitSaved(true);
     setTimeout(()=>setLimitSaved(false), 2500);
+  };
+
+  const searchBackups = async () => {
+    const email = backupEmail.trim().toLowerCase();
+    if(!email) return;
+    setBackupLoading(true);
+    setBackups([]); setBackupUser(null); setRestoreResult(null);
+    const found = users.find(u=>(u.email||"").toLowerCase()===email);
+    if(!found) { setBackupLoading(false); setRestoreResult({ok:false,msg:"Usuario no encontrado: "+email}); return; }
+    setBackupUser(found);
+    const bks = await fbGetBackups(found.uid);
+    setBackups(bks);
+    setBackupLoading(false);
+    if(bks.length===0) setRestoreResult({ok:false,msg:"No hay backups para este usuario."});
+  };
+
+  const handleRestore = async (backupId) => {
+    if(!backupUser) return;
+    setRestoring(backupId);
+    const data = await fbRestoreBackup(backupUser.uid, backupId);
+    setRestoring(null);
+    if(data) {
+      setRestoreResult({ok:true,msg:`✅ Restaurado: ${data.tradeCount} trades y ${data.accountCount} cuentas. El usuario verá sus datos al recargar.`});
+    } else {
+      setRestoreResult({ok:false,msg:"Error al restaurar."});
+    }
   };
 
   const handleToggleBan = async (uid, currentBanned) => {
@@ -1795,6 +1828,74 @@ function AdminPanel() {
           En uso: <span style={{color:"#00C076",fontWeight:700}}>{activeUsers}</span> · 
           Disponibles: <span style={{color:"#64D2FF",fontWeight:700}}>{currentMax-activeUsers}</span>
         </div>
+      </div>
+
+      {/* Logo / Branding */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+          <div style={{fontSize:18}}>🎨</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:"#E2E4EA"}}>Logo del Journal</div>
+            <div style={{fontSize:11,color:"#4A4E5A"}}>Se actualiza en tiempo real en todos los dispositivos</div>
+          </div>
+        </div>
+        <LogoUploader/>
+      </div>
+
+      {/* Backup & Restore */}
+      <div style={{background:"#13151D",border:"1px solid #1A1C24",borderRadius:12,padding:"14px 18px",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+          <div style={{fontSize:18}}>💾</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:"#E2E4EA"}}>Backup & Restauración de Datos</div>
+            <div style={{fontSize:11,color:"#4A4E5A"}}>Busca un usuario por email para ver y restaurar sus backups automáticos</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <input className="form-input" placeholder="Email del usuario…" value={backupEmail}
+            onChange={e=>setBackupEmail(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&searchBackups()}
+            style={{flex:1,minWidth:200,padding:"9px 14px",fontSize:13}}/>
+          <button className="btn btn-primary btn-sm" onClick={searchBackups} disabled={backupLoading}>
+            {backupLoading?"Buscando…":"🔍 Buscar Backups"}
+          </button>
+        </div>
+        {restoreResult && (
+          <div style={{marginTop:10,padding:"10px 14px",borderRadius:8,fontSize:13,
+            background:restoreResult.ok?"rgba(0,192,118,.1)":"rgba(255,59,48,.1)",
+            color:restoreResult.ok?"#00C076":"#FF3B30",
+            border:`1px solid ${restoreResult.ok?"rgba(0,192,118,.25)":"rgba(255,59,48,.25)"}`}}>
+            {restoreResult.msg}
+          </div>
+        )}
+        {backupUser && backups.length > 0 && (
+          <div style={{marginTop:12}}>
+            <div style={{fontSize:12,color:"#6A6E7A",marginBottom:8}}>
+              Backups de <strong style={{color:"#E2E4EA"}}>{backupUser.name}</strong> ({backupUser.email}):
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {backups.map(bk=>(
+                <div key={bk.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",
+                  background:"#0A0C10",border:"1px solid #1A1C24",borderRadius:9}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#A0A4B0"}}>
+                      📅 {bk.createdAt ? new Date(bk.createdAt).toLocaleString("es-DO") : "—"}
+                    </div>
+                    <div style={{fontSize:11,color:"#4A4E5A",marginTop:2}}>
+                      {bk.tradeCount||0} trades · {bk.accountCount||0} cuentas
+                    </div>
+                  </div>
+                  <button className="btn btn-sm" onClick={()=>handleRestore(bk.id)}
+                    disabled={restoring===bk.id}
+                    style={{background:"rgba(0,192,118,.15)",color:"#00C076",border:"1px solid rgba(0,192,118,.3)",
+                      fontWeight:700,cursor:"pointer"}}>
+                    {restoring===bk.id ? "Restaurando…" : "♻️ Restaurar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* User list */}
