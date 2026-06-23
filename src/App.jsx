@@ -1640,6 +1640,78 @@ function CalendarView({trades,accounts,onDelete,onEdit}) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// LOGO UPLOADER (Admin)
+// ═══════════════════════════════════════════════════════════════════════════════
+function LogoUploader() {
+  const [preview, setPreview] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [currentLogo, setCurrentLogo] = useState(null);
+
+  useEffect(()=>{
+    const unsub = onSnapshot(doc(db, "config", "branding"), (snap) => {
+      if(snap.exists() && snap.data().logoBase64){
+        setCurrentLogo("data:image/jpeg;base64," + snap.data().logoBase64);
+      }
+    });
+    return ()=>unsub();
+  },[]);
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if(!file) return;
+    if(!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const size = 200;
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        setPreview(dataUrl);
+        setSaved(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    if(!preview) return;
+    setSaving(true);
+    const b64 = preview.split(",")[1];
+    await fbSaveBranding({ logoBase64: b64 });
+    setSaving(false);
+    setSaved(true);
+    setPreview(null);
+  };
+
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
+      {(preview || currentLogo) && (
+        <img src={preview || currentLogo} alt="Logo" style={{height:64,width:64,objectFit:"contain",borderRadius:12,border:"1px solid #252830"}}/>
+      )}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"#161820",border:"1px solid #252830",
+          borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#A0A4B0"}}>
+          📁 Seleccionar imagen
+          <input type="file" accept="image/*" onChange={handleFile} style={{display:"none"}}/>
+        </label>
+        {preview && (
+          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+            {saving ? "Guardando…" : "✓ Aplicar Logo"}
+          </button>
+        )}
+        {saved && <span style={{fontSize:11,color:"#00C076",fontWeight:600}}>✅ Logo actualizado</span>}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
 function AdminPanel() {
