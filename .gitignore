@@ -1,3 +1,8 @@
 node_modules/
 build/
 .env.local
+
+# Credenciales y copias de datos de usuarios: NUNCA al repo
+serviceAccountKey*.json
+*-serviceaccount*.json
+backups-local/
