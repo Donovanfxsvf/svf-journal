@@ -41,9 +41,13 @@ service cloud.firestore {
                .affectedKeys().hasAny(['trades', 'accounts']);
     }
 
+    // OJO: los documentos anteriores a esta version NO tienen campo `rev`. Leer
+    // resource.data.rev directamente aborta la evaluacion y denegaria el primer
+    // guardado de cada usuario existente, por eso se usa get() con defecto 0.
+    // El cliente calcula igual: curRev = typeof cur.rev === "number" ? cur.rev : 0
     function revIncremented() {
-      return request.resource.data.rev is int
-          && request.resource.data.rev == resource.data.rev + 1;
+      return request.resource.data.rev is number
+          && request.resource.data.rev == resource.data.get('rev', 0) + 1;
     }
 
     function shapeOk() {
@@ -87,8 +91,8 @@ service cloud.firestore {
       allow update: if isSignedIn()
                     && request.resource.data.diff(resource.data)
                          .affectedKeys().hasOnly(['userCount']);
-      allow create, delete: if isAdmin();
-      allow write:  if isAdmin();   // maxUsers
+      // maxUsers y cualquier otro cambio: solo admin.
+      allow create, update, delete: if isAdmin();
     }
 
     match /config/branding {
