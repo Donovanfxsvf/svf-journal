@@ -35,17 +35,210 @@ const ACCOUNT_TYPES = [
 // ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
 const LS_THEME = "svf_theme";
 
-async function fbGetUserData(uid) {
-  try {
-    const snap = await getDoc(doc(db, "users", uid));
-    return snap.exists() ? snap.data() : null;
-  } catch { return null; }
+// ─── CAPA DE PERSISTENCIA SEGURA ──────────────────────────────────────────────
+// Invariantes que garantiza esta capa:
+//   I1. Un fallo de lectura (red/permisos) NUNCA se confunde con "usuario nuevo".
+//   I2. No se escriben trades/accounts de un uid que no se haya hidratado (leído
+//       con éxito) antes en esta sesión.
+//   I3. Toda escritura de trades/accounts es una transacción read-modify-write:
+//       lo que existe en el servidor y no fue borrado explícitamente se conserva.
+//   I4. Toda escritura verifica que auth.currentUser siga siendo el mismo uid.
+
+const READ_RETRIES = 3;
+const LS_OUTBOX    = "svf_outbox_v1";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Registro de hidratación: uid -> revisión conocida del documento.
+// Solo los uid presentes aquí pueden recibir escrituras de trades/accounts (I2).
+const hydrated = new Map();
+const markHydrated  = (uid, rev) => hydrated.set(uid, typeof rev === "number" ? rev : 0);
+const isHydrated    = uid => hydrated.has(uid);
+const clearHydrated = () => hydrated.clear();
+
+// Perfil capturado en el formulario de registro. onAuthStateChanged lo consume
+// para que el nombre real gane la carrera contra el alta automática.
+let pendingRegistration = null;
+
+const asArray  = v => (Array.isArray(v) ? v : []);
+const tradeKey = t => String(t && t.id);
+const acctKey  = a => String(a && a.id);
+
+function stripUndefined(obj) {
+  const out = {};
+  for (const k of Object.keys(obj || {})) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
 }
 
-async function fbSaveUserData(uid, data) {
+// Núcleo de la invariante I3, aislado y puro para poder razonarlo y probarlo.
+// Todo lo que el servidor tiene, el cliente no trae y el usuario NO declaró como
+// baja, se conserva. Lo que el cliente trae siempre gana en su propia versión.
+function reconcileDataset(serverList, localList, deletedIds) {
+  const server  = asArray(serverList);
+  const local   = asArray(localList);
+  const localId = new Set(local.map(x => String(x && x.id)));
+  const deleted = deletedIds instanceof Set
+    ? deletedIds
+    : new Set(asArray(deletedIds).map(String));
+  const rescued = server.filter(x => {
+    const k = String(x && x.id);
+    return !localId.has(k) && !deleted.has(k);
+  });
+  return { list: rescued.length ? [...local, ...rescued] : local, rescued: rescued.length };
+}
+
+// I1: distingue explícitamente "no existe" de "no se pudo leer".
+// Devuelve {status:"ok",data} | {status:"missing"} | {status:"error",error}
+async function fbLoadUserDoc(uid) {
+  let lastErr = null;
+  for (let i = 0; i < READ_RETRIES; i++) {
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      return snap.exists() ? { status: "ok", data: snap.data() } : { status: "missing" };
+    } catch (e) {
+      lastErr = e;
+      if (i < READ_RETRIES - 1) await sleep(400 * Math.pow(2, i));
+    }
+  }
+  console.error("fbLoadUserDoc:", lastErr);
+  return { status: "error", error: lastErr };
+}
+
+// Crea el documento solo si no existe, dentro de una transacción. Elimina la
+// carrera entre el alta del registro y onAuthStateChanged: si ambos caminos
+// llaman a la vez, uno crea y el otro lee lo ya creado.
+async function fbCreateUserDocIfMissing(uid, seed) {
   try {
-    await setDoc(doc(db, "users", uid), data, { merge: true });
-  } catch(e) { console.error("fbSave:", e); }
+    const res = await runTransaction(db, async tx => {
+      const ref  = doc(db, "users", uid);
+      const snap = await tx.get(ref);
+      if (snap.exists()) return { created: false, data: snap.data() };
+      const payload = { ...seed, rev: 0, createdAt: new Date().toISOString() };
+      tx.set(ref, payload);
+      return { created: true, data: payload };
+    });
+    markHydrated(uid, res.data.rev || 0);
+    return res;
+  } catch (e) {
+    console.error("fbCreateUserDocIfMissing:", e);
+    return null;
+  }
+}
+
+// Metadatos: merge de campos escalares. Prohibido pasar trades/accounts por aquí.
+async function fbSaveUserFields(uid, fields) {
+  if (!uid) return { ok: false, reason: "no-uid" };
+  if (!auth.currentUser || auth.currentUser.uid !== uid) return { ok: false, reason: "uid-mismatch" };
+  if ("trades" in (fields || {}) || "accounts" in (fields || {})) {
+    console.error("fbSaveUserFields: trades/accounts deben ir por fbSaveUserDataset");
+    return { ok: false, reason: "forbidden-field" };
+  }
+  try {
+    await setDoc(doc(db, "users", uid), stripUndefined(fields), { merge: true });
+    return { ok: true };
+  } catch (e) {
+    console.error("fbSaveUserFields:", e);
+    return { ok: false, reason: "error", error: e };
+  }
+}
+
+// Único camino para escribir trades/accounts.
+//
+// deletedTradeIds / deletedAccountIds son las bajas que el usuario pidió de forma
+// explícita en esta sesión. Cualquier registro que exista en el servidor, no esté
+// en el payload local y no esté declarado como baja, se re-inserta (I3). Eso hace
+// estructuralmente imposible que un estado local incompleto (arranque a medias,
+// otra pestaña más adelantada, semilla demo) borre datos reales.
+async function fbSaveUserDataset(uid, { trades, accounts, deletedTradeIds = [], deletedAccountIds = [] }) {
+  if (!uid) return { ok: false, reason: "no-uid" };
+  if (!auth.currentUser || auth.currentUser.uid !== uid) return { ok: false, reason: "uid-mismatch" };
+  if (!isHydrated(uid)) return { ok: false, reason: "not-hydrated" };
+  if (!Array.isArray(trades) || !Array.isArray(accounts)) return { ok: false, reason: "not-an-array" };
+
+  const delT = new Set(deletedTradeIds.map(String));
+  const delA = new Set(deletedAccountIds.map(String));
+
+  try {
+    const res = await runTransaction(db, async tx => {
+      const ref  = doc(db, "users", uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return { ok: false, reason: "doc-missing" };
+
+      const cur       = snap.data();
+      const curRev    = typeof cur.rev === "number" ? cur.rev : 0;
+      const curTrades = asArray(cur.trades);
+      const curAccts  = asArray(cur.accounts);
+
+      // I3: rescate de lo que el servidor tiene y el cliente no conoce.
+      const rT = reconcileDataset(curTrades, trades,   delT);
+      const rA = reconcileDataset(curAccts,  accounts, delA);
+
+      tx.set(ref, {
+        trades:    rT.list,
+        accounts:  rA.list,
+        rev:       curRev + 1,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        rev: curRev + 1,
+        trades: rT.list,
+        accounts: rA.list,
+        rescued: rT.rescued + rA.rescued,
+      };
+    });
+    if (res.ok) markHydrated(uid, res.rev);
+    return res;
+  } catch (e) {
+    console.error("fbSaveUserDataset:", e);
+    return { ok: false, reason: "error", error: e };
+  }
+}
+
+// ─── OUTBOX LOCAL ─────────────────────────────────────────────────────────────
+// Si el usuario cierra la pestaña sin red, el cambio pendiente sobrevive aquí y
+// se reintegra en el siguiente arranque. El rescate de I3 cubre el sentido
+// contrario (servidor -> cliente).
+function outboxRead(uid) {
+  try {
+    const raw = localStorage.getItem(LS_OUTBOX + ":" + uid);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.trades) && Array.isArray(parsed.accounts) ? parsed : null;
+  } catch { return null; }
+}
+function outboxWrite(uid, trades, accounts, deletedTradeIds, deletedAccountIds) {
+  try {
+    localStorage.setItem(LS_OUTBOX + ":" + uid, JSON.stringify({
+      trades, accounts, deletedTradeIds, deletedAccountIds, at: Date.now(),
+    }));
+  } catch {}
+}
+function outboxClear(uid) {
+  try { localStorage.removeItem(LS_OUTBOX + ":" + uid); } catch {}
+}
+
+// Fusiona el outbox pendiente sobre lo leído del servidor (unión por id).
+function mergeOutbox(serverTrades, serverAccounts, box) {
+  if (!box) return { trades: serverTrades, accounts: serverAccounts, changed: false };
+  const delT = new Set((box.deletedTradeIds   || []).map(String));
+  const delA = new Set((box.deletedAccountIds || []).map(String));
+  const boxT = new Set(box.trades.map(tradeKey));
+  const boxA = new Set(box.accounts.map(acctKey));
+  const keptT = serverTrades.filter(t => !boxT.has(tradeKey(t)) && !delT.has(tradeKey(t)));
+  const keptA = serverAccounts.filter(a => !boxA.has(acctKey(a)) && !delA.has(acctKey(a)));
+  const trades   = [...box.trades, ...keptT];
+  const accounts = [...box.accounts, ...keptA];
+  // Detecta también ediciones sin cambio de tamaño (un trade corregido offline).
+  let changed = trades.length !== serverTrades.length || accounts.length !== serverAccounts.length;
+  if(!changed){
+    try {
+      const byId = arr => [...arr].sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+      changed = JSON.stringify(byId(trades))   !== JSON.stringify(byId(serverTrades))
+             || JSON.stringify(byId(accounts)) !== JSON.stringify(byId(serverAccounts));
+    } catch { changed = true; }
+  }
+  return { trades, accounts, changed };
 }
 
 // ─── ADMIN HELPERS ────────────────────────────────────────────────────────────
@@ -82,15 +275,29 @@ async function fbGetAllUsers() {
 // ─── BACKUP SYSTEM ────────────────────────────────────────────────────────────
 const MAX_BACKUPS = 10;
 
+// Huella del dataset: evita gastar los 10 puntos de restauración guardando diez
+// copias idénticas (antes cada login escribía un backup aunque nada cambiara).
+const LS_BKFP = "svf_bkfp_v1";
+function hashStr(s){ let h=5381; for(let i=0;i<s.length;i++) h=((h*33)^s.charCodeAt(i))|0; return h>>>0; }
+function datasetFingerprint(trades, accounts){
+  try { return String(hashStr(JSON.stringify(trades)+"|"+JSON.stringify(accounts))); }
+  catch { return String(Date.now()); }
+}
+
 async function fbSaveBackup(uid, trades, accounts) {
   try {
     if(!trades || trades.length === 0) return;
+    const fp = datasetFingerprint(trades, accounts || []);
+    try {
+      if(localStorage.getItem(LS_BKFP + ":" + uid) === fp) return; // nada cambió
+    } catch {}
     const ts = new Date().toISOString();
     const backupId = "bk_" + Date.now();
     await setDoc(doc(db, "users", uid, "backups", backupId), {
-      trades, accounts, createdAt: ts,
-      tradeCount: trades.length, accountCount: accounts.length,
+      trades, accounts: accounts || [], createdAt: ts,
+      tradeCount: trades.length, accountCount: (accounts || []).length,
     });
+    try { localStorage.setItem(LS_BKFP + ":" + uid, fp); } catch {}
     // Keep only last MAX_BACKUPS
     const snaps = await getDocs(collection(db, "users", uid, "backups"));
     const all = snaps.docs.map(d=>({id:d.id,createdAt:d.data().createdAt||""}))
@@ -116,9 +323,37 @@ async function fbRestoreBackup(uid, backupId) {
     const snap = await getDoc(doc(db, "users", uid, "backups", backupId));
     if(!snap.exists()) return null;
     const data = snap.data();
-    await setDoc(doc(db, "users", uid), { trades: data.trades, accounts: data.accounts }, { merge: true });
+
+    // Antes de sobrescribir, guardar el estado actual como backup propio para que
+    // una restauración equivocada también sea reversible.
+    const curSnap = await getDoc(doc(db, "users", uid));
+    if(curSnap.exists()) {
+      await fbSaveBackup(uid, asArray(curSnap.data().trades), asArray(curSnap.data().accounts));
+    }
+
+    // Transacción: la restauración es un reemplazo deliberado, por eso NO usa el
+    // rescate de fbSaveUserDataset, pero sí incrementa rev para que los clientes
+    // abiertos detecten el cambio en su próxima escritura.
+    await runTransaction(db, async tx => {
+      const ref  = doc(db, "users", uid);
+      const cur  = await tx.get(ref);
+      const rev  = cur.exists() && typeof cur.data().rev === "number" ? cur.data().rev : 0;
+      tx.set(ref, {
+        trades:    asArray(data.trades),
+        accounts:  asArray(data.accounts),
+        rev:       rev + 1,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    });
     return data;
   } catch(e) { console.error("restore:", e); return null; }
+}
+
+async function fbSaveBranding(data) {
+  try {
+    await setDoc(doc(db, "config", "branding"), data, { merge: true });
+    return true;
+  } catch(e) { console.error("branding:", e); return false; }
 }
 
 async function fbSetUserBanned(uid, banned) {
@@ -679,17 +914,26 @@ function Login() {
         setErr(`Se ha alcanzado el límite de accesos VIP (${limit}). Contacta a SMO.`);
         setLoading(false); return;
       }
-      const cred = await createUserWithEmailAndPassword(auth, rEmail.trim().toLowerCase(), rPass);
-      await fbSaveUserData(cred.user.uid, {
-        name: rName.trim(),
-        email: rEmail.trim().toLowerCase(),
-        accounts: [],
-        trades: [],
+      const regEmail = rEmail.trim().toLowerCase();
+      const regName  = rName.trim();
+      // Se publica ANTES de crear el usuario: onAuthStateChanged dispara de
+      // inmediato y debe poder sembrar el documento con el nombre real.
+      pendingRegistration = { name: regName, email: regEmail };
+      const cred = await createUserWithEmailAndPassword(auth, regEmail, rPass);
+      // Creación idempotente y transaccional: si onAuthStateChanged ya creó el
+      // documento, esto no lo pisa. Antes, ambos caminos escribían y el último en
+      // llegar ganaba (de ahí las cuentas nuevas que aparecían vacías o en demo).
+      await fbCreateUserDocIfMissing(cred.user.uid, {
+        name: regName,
+        email: regEmail,
         registeredAt: new Date().toISOString(),
+        ...DEMO_SEED_DATA,
       });
+      await fbSaveUserFields(cred.user.uid, { name: regName, email: regEmail });
       await fbIncrementUserCount();
       // onLogin triggered via onAuthStateChanged
     } catch(e) {
+      pendingRegistration = null;
       const msg = e.code==="auth/email-already-in-use"
         ? "Este email ya está registrado."
         : "Error al crear cuenta.";
@@ -2396,7 +2640,8 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
     if(!name.trim()) return onToast("El nombre no puede estar vacío.","error");
     if(!email.includes("@")) return onToast("Email inválido.","error");
     const updated={...user,name:name.trim(),email:email.toLowerCase()};
-    await fbSaveUserData(auth.currentUser.uid,{name:updated.name,email:updated.email});
+    const res = await fbSaveUserFields(user.id,{name:updated.name,email:updated.email});
+    if(!res.ok) return onToast("No se pudo guardar el perfil. Revisa tu conexión.","error");
     onUpdateUser(updated);
     onToast("Perfil actualizado ✓","success");
   };
@@ -2418,7 +2663,12 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
   const handleDelete = async () => {
     if(deleteConfirm!=="ELIMINAR") return onToast('Escribe "ELIMINAR" para confirmar.','error');
     try {
-      await deleteDoc(doc(db,"users",auth.currentUser.uid));
+      const uid = auth.currentUser.uid;
+      // Cortar la hidratación primero: ningún guardado en vuelo puede recrear el
+      // documento después de borrarlo.
+      clearHydrated();
+      outboxClear(uid);
+      await deleteDoc(doc(db,"users",uid));
       await firebaseDeleteUser(auth.currentUser);
       onDeleteAccount();
       onClose();
@@ -2536,8 +2786,18 @@ function SettingsModal({user, theme, onClose, onUpdateUser, onToggleTheme, onDel
 export default function App() {
   const [user,      setUser]      = useState(null);
   const [trades,    setTrades]    = useState([]);
-  const tradesModified = useRef(false); // only true after user action, prevents saving [] on load
-  const lastBackupRef = useRef(0);
+  const [loadError, setLoadError] = useState(null);   // lectura fallida != usuario nuevo
+  const [saveState, setSaveState] = useState("idle"); // idle | saving | pending | error
+  // dirty se enciende solo tras una acción real del usuario: impide que el estado
+  // inicial ([] mientras carga) llegue nunca a escribirse.
+  const dirtyRef       = useRef(false);
+  const lastBackupRef  = useRef(0);
+  // Bajas declaradas explícitamente por el usuario en esta sesión. Sin esto, la
+  // capa de persistencia re-inserta cualquier registro que falte localmente.
+  const delTradesRef   = useRef(new Set());
+  const delAcctsRef    = useRef(new Set());
+  // Cola de guardado con debounce + reintentos.
+  const saveRef        = useRef({ timer:null, running:false, pending:null, retries:0 });
   const [tab,       setTab]       = useState("dashboard");
   const [scope,     setScope]     = useState("global");
   const [activeAccts,setActAccts] = useState([]);
@@ -2549,83 +2809,232 @@ export default function App() {
   const [toasts,    setToasts]    = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Firebase Auth state listener — auto-login / logout
+  const addToast = useCallback((msg, type="success") => {
+    const id = Date.now() + Math.random();
+    setToasts(p=>[...p,{id,msg,type}]);
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)), 3200);
+  },[]);
+
+  // ─── MOTOR DE GUARDADO ──────────────────────────────────────────────────────
+  // Un solo escritor, con debounce, reintentos y espejo local. Antes cada cambio
+  // disparaba un setDoc suelto cuyo error se tragaba un catch silencioso.
+  const runSave = useCallback(async function runSaveInner() {
+    const s = saveRef.current;
+    if(s.running || !s.pending) return;
+    const job = s.pending;
+    s.pending = null;
+    s.running = true;
+    setSaveState("saving");
+
+    const res = await fbSaveUserDataset(job.uid, {
+      trades: job.trades,
+      accounts: job.accounts,
+      deletedTradeIds: job.deletedTradeIds,
+      deletedAccountIds: job.deletedAccountIds,
+    });
+    s.running = false;
+
+    if(res.ok){
+      s.retries = 0;
+      outboxClear(job.uid);
+      job.deletedTradeIds.forEach(id => delTradesRef.current.delete(id));
+      job.deletedAccountIds.forEach(id => delAcctsRef.current.delete(id));
+
+      // El servidor tenía registros que este cliente no conocía (otra pestaña,
+      // otro dispositivo). Se adoptan sin perder lo local.
+      if(res.rescued > 0 && auth.currentUser && auth.currentUser.uid === job.uid){
+        dirtyRef.current = false;
+        setTrades(res.trades);
+        setUser(u => (u && u.id === job.uid) ? {...u, trades:res.trades, accounts:res.accounts} : u);
+        // Conserva el filtro de cuentas del usuario y añade solo las rescatadas.
+        setActAccts(prev => {
+          const alive = res.accounts.map(a=>a.id);
+          const kept  = prev.filter(id => alive.includes(id));
+          const added = alive.filter(id => !prev.includes(id));
+          return [...kept, ...added];
+        });
+        addToast(`Se recuperaron ${res.rescued} registro(s) de otra sesión.`, "success");
+      }
+
+      if(res.trades.length && Date.now() - lastBackupRef.current > 5*60*1000){
+        lastBackupRef.current = Date.now();
+        fbSaveBackup(job.uid, res.trades, res.accounts);
+      }
+      setSaveState(s.pending ? "pending" : "idle");
+      if(s.pending) runSaveInner();
+      return;
+    }
+
+    // Fallo: el trabajo se conserva en memoria y en el espejo local, y se
+    // reintenta. Nunca se descarta en silencio.
+    outboxWrite(job.uid, job.trades, job.accounts, job.deletedTradeIds, job.deletedAccountIds);
+    if(res.reason === "uid-mismatch" || res.reason === "not-hydrated"){
+      // Sesión cambiada o datos no cargados: escribir sería peligroso, se aborta.
+      console.warn("guardado abortado:", res.reason);
+      setSaveState("idle");
+      return;
+    }
+    if(!s.pending) s.pending = job;
+    if(s.retries < 5){
+      s.retries++;
+      setSaveState("pending");
+      clearTimeout(s.timer);
+      s.timer = setTimeout(runSaveInner, 1500 * s.retries);
+    } else {
+      setSaveState("error");
+      addToast("No se pudieron guardar los cambios. Revisa tu conexión.", "error");
+    }
+  },[addToast]);
+
+  const scheduleSave = useCallback((uid, nextTrades, nextAccounts) => {
+    const s = saveRef.current;
+    const deletedTradeIds   = [...delTradesRef.current];
+    const deletedAccountIds = [...delAcctsRef.current];
+    s.pending = { uid, trades: nextTrades, accounts: nextAccounts, deletedTradeIds, deletedAccountIds };
+    // Espejo local inmediato: si la pestaña muere antes del envío, el cambio
+    // sobrevive y se reintegra en el próximo arranque.
+    outboxWrite(uid, nextTrades, nextAccounts, deletedTradeIds, deletedAccountIds);
+    setSaveState("pending");
+    clearTimeout(s.timer);
+    s.timer = setTimeout(runSave, 700);
+  },[runSave]);
+
+  const flushSave = useCallback(() => {
+    const s = saveRef.current;
+    if(s.timer){ clearTimeout(s.timer); s.timer = null; }
+    if(s.pending) runSave();
+  },[runSave]);
+
+  // ─── SESIÓN ─────────────────────────────────────────────────────────────────
   useEffect(()=>{
+    let gen = 0;
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if(firebaseUser){
-        let data = await fbGetUserData(firebaseUser.uid);
-        // Seed demo data ONLY for brand new users (document does not exist at all)
-        // NEVER overwrite existing users even if accounts/trades are empty
-        if(!data){
-          data = {
-            name: firebaseUser.displayName || firebaseUser.email.split("@")[0],
-            email: firebaseUser.email,
-            customAssets: [],
-            rrPresets: [...DEFAULT_RR_PRESETS],
-            registeredAt: new Date().toISOString(),
-            ...DEMO_SEED_DATA,
-          };
-          await fbSaveUserData(firebaseUser.uid, data);
-        }
-        // Check if banned
-        if(data && data.banned) {
-          await signOut(auth);
+      const myGen = ++gen;
+      // Toda sesión arranca de cero: sin hidratación no hay escrituras (I2).
+      clearHydrated();
+      clearTimeout(saveRef.current.timer);
+      saveRef.current = { timer:null, running:false, pending:null, retries:0 };
+      dirtyRef.current = false;
+      delTradesRef.current = new Set();
+      delAcctsRef.current  = new Set();
+      lastBackupRef.current = 0;
+      setSaveState("idle");
+
+      if(!firebaseUser){
+        setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
+        setLoadError(null); setAuthLoading(false);
+        return;
+      }
+
+      const uid = firebaseUser.uid;
+      const res = await fbLoadUserDoc(uid);
+      // Callback obsoleto: llegó otro login/logout mientras leíamos.
+      if(myGen !== gen || !auth.currentUser || auth.currentUser.uid !== uid) return;
+
+      if(res.status === "error"){
+        // I1: NO sembrar, NO escribir. Esta rama era la que borraba a los usuarios.
+        setUser(null); setTrades([]); setActAccts([]);
+        setLoadError("No pudimos cargar tus datos. Tus trades siguen a salvo en el servidor — revisa tu conexión y reintenta.");
+        setAuthLoading(false);
+        return;
+      }
+
+      let data;
+      if(res.status === "missing"){
+        const reg = pendingRegistration; pendingRegistration = null;
+        const created = await fbCreateUserDocIfMissing(uid, {
+          name:  (reg && reg.name) || firebaseUser.displayName || firebaseUser.email.split("@")[0],
+          email: firebaseUser.email,
+          registeredAt: new Date().toISOString(),
+          ...DEMO_SEED_DATA,
+        });
+        if(myGen !== gen || !auth.currentUser || auth.currentUser.uid !== uid) return;
+        if(!created){
+          setUser(null); setTrades([]); setActAccts([]);
+          setLoadError("No pudimos preparar tu cuenta. Revisa tu conexión y reintenta.");
           setAuthLoading(false);
           return;
         }
-        // Ensure rrPresets exists for legacy users
-        if(!data.rrPresets) data.rrPresets = [...DEFAULT_RR_PRESETS];
-        if(!data.customAssets) data.customAssets = [];
-        const u = { id: firebaseUser.uid, ...data };
-        setUser(u);
-        setTrades(u.trades||[]);
-        setActAccts((u.accounts||[]).map(a=>a.id));
+        data = created.data;
       } else {
-        setUser(null); setTrades([]); setActAccts([]); setTab("dashboard");
+        data = res.data;
       }
+
+      if(data.banned){
+        clearHydrated();
+        await signOut(auth);
+        setAuthLoading(false);
+        return;
+      }
+
+      markHydrated(uid, typeof data.rev === "number" ? data.rev : 0);
+
+      // Reintegra cambios que quedaron sin enviar en un cierre sin red.
+      const box    = outboxRead(uid);
+      const merged = mergeOutbox(asArray(data.trades), asArray(data.accounts), box);
+
+      setUser({
+        id: uid,
+        ...data,
+        trades:       merged.trades,
+        accounts:     merged.accounts,
+        customAssets: asArray(data.customAssets),
+        rrPresets:    asArray(data.rrPresets).length ? data.rrPresets : [...DEFAULT_RR_PRESETS],
+      });
+      setTrades(merged.trades);
+      setActAccts(merged.accounts.map(a=>a.id));
+      setLoadError(null);
       setAuthLoading(false);
+
+      if(merged.changed){
+        dirtyRef.current = true;
+        delTradesRef.current = new Set((box.deletedTradeIds   || []).map(String));
+        delAcctsRef.current  = new Set((box.deletedAccountIds || []).map(String));
+        addToast("Recuperamos cambios que habían quedado sin guardar.", "success");
+      } else {
+        outboxClear(uid);
+      }
+
+      if(merged.trades.length){
+        lastBackupRef.current = Date.now();
+        fbSaveBackup(uid, merged.trades, merged.accounts);
+      }
     });
-    return ()=>unsub();
-  },[]);
+    return ()=>{ gen++; unsub(); };
+  },[addToast]);
 
-  // Persistir trades y accounts en Firestore — SOLO cuando el usuario hace una acción real
-  // Esto previene que trades:[] sobrescriba los datos al cargar la app
+  // ─── PERSISTENCIA ───────────────────────────────────────────────────────────
   useEffect(()=>{
-    if(!user||!auth.currentUser) return;
-    if(!tradesModified.current) return; // no guardar en carga inicial
-    fbSaveUserData(auth.currentUser.uid, {trades, accounts: user.accounts});
-    // Auto-backup cada 5 minutos si hay trades
-    const now = Date.now();
-    if(trades.length > 0 && now - lastBackupRef.current > 5*60*1000) {
-      lastBackupRef.current = now;
-      fbSaveBackup(auth.currentUser.uid, trades, user.accounts);
-    }
-  },[trades, user]);
+    if(!user || !user.id) return;
+    if(!dirtyRef.current) return;                                  // nada tocado por el usuario
+    if(!isHydrated(user.id)) return;                               // I2
+    if(!auth.currentUser || auth.currentUser.uid !== user.id) return; // I4
+    scheduleSave(user.id, trades, asArray(user.accounts));
+  },[trades, user, scheduleSave]);
 
-  // Backup inmediato al cargar datos por primera vez
+  // Enviar lo pendiente antes de que la pestaña se oculte o se cierre.
   useEffect(()=>{
-    if(!user||!auth.currentUser) return;
-    const trades_loaded = user.trades || [];
-    if(trades_loaded.length > 0 && lastBackupRef.current === 0) {
-      lastBackupRef.current = Date.now();
-      fbSaveBackup(auth.currentUser.uid, trades_loaded, user.accounts || []);
-    }
-  },[user?.id]);
+    const onHide = () => { if(document.visibilityState === "hidden") flushSave(); };
+    window.addEventListener("pagehide", flushSave);
+    document.addEventListener("visibilitychange", onHide);
+    return ()=>{
+      window.removeEventListener("pagehide", flushSave);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  },[flushSave]);
 
   const login = useCallback(() => {
     // handled by onAuthStateChanged
   },[]);
 
   const logout = async () => {
-    tradesModified.current = false;
+    const s = saveRef.current;
+    if(s.timer){ clearTimeout(s.timer); s.timer = null; }
+    if(s.pending) await runSave();   // no se cierra sesión con cambios sin enviar
+    dirtyRef.current = false;
+    clearHydrated();
     await signOut(auth);
   };
-
-  const addToast = useCallback((msg, type="success") => {
-    const id = Date.now();
-    setToasts(p=>[...p,{id,msg,type}]);
-    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)), 3200);
-  },[]);
 
   const toggleTheme = useCallback(()=>{
     setTheme(t=>{
@@ -2646,44 +3055,61 @@ export default function App() {
     );
   },[]);
 
-  const addTrade = useCallback(t => { tradesModified.current=true; setTrades(p=>[...p,{...t,id:Date.now()}]); },[]);
-  const editTrade = useCallback(t => { tradesModified.current=true; setTrades(p=>p.map(x=>x.id===t.id?t:x)); },[]);
-  const delTrade = useCallback(id => { tradesModified.current=true; setTrades(p=>p.filter(t=>t.id!==id)); },[]);
+  // Nota: las bajas se declaran en delTradesRef/delAcctsRef. Todo lo que exista en
+  // el servidor y NO esté declarado como baja se re-inserta al guardar, así que
+  // un estado local incompleto ya no puede borrar nada.
+  const addTrade  = useCallback(t => {
+    dirtyRef.current = true;
+    setTrades(p=>[...p,{...t,id:Date.now()}]);
+  },[]);
+  const editTrade = useCallback(t => {
+    dirtyRef.current = true;
+    setTrades(p=>p.map(x=>x.id===t.id?t:x));
+  },[]);
+  const delTrade  = useCallback(id => {
+    dirtyRef.current = true;
+    delTradesRef.current.add(String(id));
+    setTrades(p=>p.filter(t=>t.id!==id));
+  },[]);
+
   const addAccount = useCallback(a => {
-    tradesModified.current=true;
-    setUser(u=>({...u,accounts:[...u.accounts,a]}));
+    dirtyRef.current = true;
+    setUser(u=>({...u,accounts:[...asArray(u.accounts),a]}));
     setActAccts(p=>[...p,a.id]);
   },[]);
+
   const editAccount = useCallback(updated => {
-    tradesModified.current=true;
-    const next = user.accounts.map(a => a.id===updated.id ? updated : a);
-    setUser(u=>({...u,accounts:next}));
-    fbSaveUserData(auth.currentUser.uid, {accounts:next});
-  },[user]);
+    dirtyRef.current = true;
+    // El guardado lo hace el efecto de persistencia; antes había además un
+    // setDoc suelto que competía con él.
+    setUser(u=>({...u,accounts:asArray(u.accounts).map(a=>a.id===updated.id?updated:a)}));
+  },[]);
 
   const delAccount = useCallback(id => {
-    tradesModified.current=true;
-    setUser(u=>({...u,accounts:u.accounts.filter(a=>a.id!==id)}));
+    dirtyRef.current = true;
+    delAcctsRef.current.add(String(id));
+    // Los trades de la cuenta también son bajas explícitas.
+    trades.filter(t=>t.accountId===id).forEach(t=>delTradesRef.current.add(String(t.id)));
+    setUser(u=>({...u,accounts:asArray(u.accounts).filter(a=>a.id!==id)}));
     setActAccts(p=>p.filter(x=>x!==id));
     setTrades(p=>p.filter(t=>t.accountId!==id));
-  },[]);
+  },[trades]);
+
   const addCustomAsset = useCallback(name => {
     const trimmed = name.trim().toUpperCase();
-    if(!trimmed) return;
-    setUser(u=>{
-      const existing = u.customAssets||[];
-      if(existing.includes(trimmed)||(DEFAULT_ASSETS.includes(trimmed))) return u;
-      const next = [...existing, trimmed];
-      if(auth.currentUser) fbSaveUserData(auth.currentUser.uid,{customAssets:next});
-      return {...u, customAssets: next};
-    });
-  },[]);
+    if(!trimmed || !user) return;
+    const existing = asArray(user.customAssets);
+    if(existing.includes(trimmed) || DEFAULT_ASSETS.includes(trimmed)) return;
+    const next = [...existing, trimmed];
+    setUser(u=>({...u, customAssets: next}));
+    fbSaveUserFields(user.id, {customAssets: next});
+  },[user]);
+
   const updateRrPresets = useCallback(presets => {
-    setUser(u=>{
-      if(auth.currentUser) fbSaveUserData(auth.currentUser.uid,{rrPresets:presets});
-      return {...u, rrPresets: presets};
-    });
-  },[]);
+    if(!user) return;
+    setUser(u=>({...u, rrPresets: presets}));
+    fbSaveUserFields(user.id, {rrPresets: presets});
+  },[user]);
 
   // Trades filtered by active accounts (for scope=account, else all)
   const visibleTrades = useMemo(() => {
@@ -2693,14 +3119,14 @@ export default function App() {
 
   const visibleAccounts = useMemo(() => {
     if(!user) return [];
-    return user.accounts.filter(a=>activeAccts.includes(a.id));
+    return asArray(user.accounts).filter(a=>activeAccts.includes(a.id));
   },[user,activeAccts]);
 
   // Current account display (for switcher)
   const currentAcct = useMemo(()=>{
     if(!user) return null;
     if(scope==="global") return null;
-    return user.accounts.find(a=>a.id===activeAccts[0]);
+    return asArray(user.accounts).find(a=>a.id===activeAccts[0]);
   },[user,activeAccts,scope]);
 
   const isAdmin = ADMIN_EMAILS.includes(user?.email);
@@ -2714,9 +3140,27 @@ export default function App() {
   ];
 
   if(authLoading) return <><style>{css}</style><div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0E1117",color:"#00C076",fontSize:16,fontWeight:600}}>Cargando SVF Journal…</div></>;
+
+  // Lectura fallida: se muestra un reintento en vez de entrar con datos vacíos.
+  // Mientras esta pantalla está visible no se escribe absolutamente nada.
+  if(loadError) return (
+    <><style>{css}</style>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        height:"100vh",background:"#0E1117",padding:24,textAlign:"center",gap:16}}>
+        <div style={{fontSize:32}}>📡</div>
+        <div style={{fontSize:16,fontWeight:700,color:"#E2E4EA",maxWidth:420,lineHeight:1.5}}>{loadError}</div>
+        <div style={{display:"flex",gap:10}}>
+          <button className="btn btn-primary" onClick={()=>window.location.reload()}>Reintentar</button>
+          <button className="btn" style={{background:"#161820",color:"#A0A4B0",border:"1px solid #252830"}}
+            onClick={()=>{ clearHydrated(); signOut(auth); setLoadError(null); }}>Cerrar sesión</button>
+        </div>
+      </div>
+    </>
+  );
+
   if(!user) return <><style>{css}</style><Login/></>;
 
-  const allAcctPnl = user.accounts.map(a=>({
+  const allAcctPnl = asArray(user.accounts).map(a=>({
     id:a.id,
     pnl:trades.filter(t=>t.accountId===a.id).reduce((s,t)=>s+t.pnl,0)
   }));
@@ -2765,11 +3209,17 @@ export default function App() {
           </nav>
 
           <div className="sidebar-user">
-            <div className="avatar">{user.name[0]}</div>
+            <div className="avatar">{(user.name||user.email||"?")[0]}</div>
             <div style={{flex:1,overflow:"hidden"}}>
-              <div className="user-name">{user.name}</div>
+              <div className="user-name">{user.name||user.email}</div>
               <div className="user-email">{user.email}</div>
             </div>
+            {saveState!=="idle" && (
+              <span title={saveState==="error"?"No se pudo guardar":"Guardando…"}
+                style={{fontSize:11,marginRight:4,color:saveState==="error"?"#FF3B30":"#FFD60A"}}>
+                {saveState==="error"?"⚠":"●"}
+              </span>
+            )}
             <button className="settings-btn" onClick={()=>setShowSettings(true)} title="Ajustes">⚙️</button>
             <button className="logout-btn" onClick={logout} title="Cerrar sesión">⏏</button>
           </div>
