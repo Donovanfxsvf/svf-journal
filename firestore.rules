@@ -1,0 +1,104 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPUESTA — REVISAR ANTES DE DESPLEGAR.
+//
+// Estas reglas son el respaldo del lado servidor de las invariantes que ahora
+// aplica src/App.jsx. El cliente puede tener bugs o quedar cacheado en una
+// version vieja; el servidor no.
+//
+// La regla clave es la de `rev`: cualquier escritura que toque trades/accounts
+// DEBE incrementar `rev` en exactamente 1. Como `rev` solo se puede calcular
+// leyendo el documento actual, esto hace que el servidor rechace toda escritura
+// "a ciegas" — justo el patron que borraba los datos de los usuarios.
+//
+// Antes de desplegar, comprobar contra produccion:
+//   firebase deploy --only firestore:rules
+//   (o probarlas primero en el simulador de reglas de la consola de Firebase)
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email in [
+        'donovanjms@gmail.com',
+        'crmacademyus@gmail.com'
+      ];
+    }
+
+    // Campos de datos que solo pueden escribirse con control de revision.
+    function touchesDataset() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys().hasAny(['trades', 'accounts']);
+    }
+
+    function revIncremented() {
+      return request.resource.data.rev is int
+          && request.resource.data.rev == resource.data.rev + 1;
+    }
+
+    function shapeOk() {
+      return (!('trades'   in request.resource.data) || request.resource.data.trades   is list)
+          && (!('accounts' in request.resource.data) || request.resource.data.accounts is list);
+    }
+
+    match /users/{uid} {
+      allow get:  if isOwner(uid) || isAdmin();
+      allow list: if isAdmin();                       // panel admin
+
+      // Alta: solo el propio usuario, y siempre arrancando en rev 0.
+      allow create: if isOwner(uid)
+                    && shapeOk()
+                    && request.resource.data.rev == 0;
+
+      // Actualizacion del propio usuario:
+      //  - metadatos (nombre, email, customAssets, rrPresets): libre
+      //  - trades/accounts: obligan a incrementar rev, o sea a haber leido antes
+      allow update: if isOwner(uid)
+                    && shapeOk()
+                    && (!touchesDataset() || revIncremented());
+
+      // El admin puede banear y restaurar backups. La restauracion tambien
+      // incrementa rev, asi que pasa por la misma puerta.
+      allow update: if isAdmin()
+                    && shapeOk()
+                    && (!touchesDataset() || revIncremented());
+
+      allow delete: if isOwner(uid);
+
+      // Backups: el usuario escribe los suyos, el admin puede leer y restaurar.
+      match /backups/{backupId} {
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    match /config/stats {
+      allow read:   if isSignedIn();
+      // El contador de altas lo incrementa el cliente al registrarse.
+      allow update: if isSignedIn()
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['userCount']);
+      allow create, delete: if isAdmin();
+      allow write:  if isAdmin();   // maxUsers
+    }
+
+    match /config/branding {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // Todo lo demas: denegado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
